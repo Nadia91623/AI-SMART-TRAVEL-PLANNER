@@ -1,0 +1,2533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Smart Travel Planner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script>
+    // Fast guard: no local flag -> go straight to the login page.
+    if (localStorage.getItem("isLoggedIn") !== "true") {
+        window.location.href = "a login page.html";
+    } else {
+        // Reconcile the flag with the real server session. Sessions are stored
+        // in memory and are dropped when the server restarts, so a stale flag
+        // could otherwise keep a logged-out user on a broken dashboard. If the
+        // server says we're not authenticated, clear the flag and go to login.
+        fetch('/api/check-auth', { credentials: 'same-origin' })
+            .then(function (r) {
+                if (!r.ok) {
+                    localStorage.removeItem("isLoggedIn");
+                    window.location.href = "a login page.html";
+                }
+            })
+            .catch(function () { /* network hiccup: leave the page as-is */ });
+    }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+/* ===================== ROOT ===================== */
+:root {
+  --primary: #3A86FF; /* Vibrant blue */
+  --secondary: #FF006E; /* Bright pink */
+  --accent: #8338EC; /* Purple */
+  --success: #38B000; /* Green */
+  --warning: #FF9E00; /* Orange */
+  --dark: #1A1A2E; /* Dark blue */
+  --light: #F8F9FA; /* Light grey */
+  --gradient-primary: linear-gradient(135deg, #3A86FF, #8338EC);
+  --gradient-secondary: linear-gradient(135deg, #FF006E, #FF9E00);
+  --gradient-bg: linear-gradient(135deg, #E6F7FF 0%, #F0E6FF 100%);
+  --glass: rgba(255, 255, 255, 0.85);
+  --glass-dark: rgba(26, 26, 46, 0.85);
+  --blur: blur(16px);
+  --radius: 20px;
+  --shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  --shadow-hover: 0 25px 50px rgba(0, 0, 0, 0.15);
+}
+
+/* ===================== BASE ===================== */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--gradient-bg);
+  color: var(--dark);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ===================== NAVBAR ===================== */
+nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 40px;
+  background: var(--gradient-primary);
+  color: white;
+  box-shadow: 0 10px 30px rgba(58, 134, 255, 0.3);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo h2 {
+  margin: 0;
+  font-size: 1.8rem;
+  background: linear-gradient(to right, #FFD166, #FF9E00);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 800;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 15px;
+}
+
+nav button {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 10px 20px;
+  border-radius: 50px;
+  font-size: 15px;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(5px);
+}
+
+nav button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateY(-3px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* ===================== SECTIONS ===================== */
+section {
+  max-width: 1200px;
+  margin: 40px auto;
+  padding: 0 20px;
+  animation: fade 0.5s ease-out;
+}
+
+@keyframes fade {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ===================== CARDS ===================== */
+.card {
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  border-radius: var(--radius);
+  padding: 30px;
+  box-shadow: var(--shadow);
+  margin-bottom: 30px;
+  transition: all 0.4s ease;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 5px;
+  background: var(--gradient-primary);
+}
+
+.card:hover {
+  transform: translateY(-10px);
+  box-shadow: var(--shadow-hover);
+}
+
+.card h1, .card h2 {
+  margin-top: 0;
+  color: var(--dark);
+}
+
+.card h2 {
+  color: var(--primary);
+  border-bottom: 2px solid var(--primary);
+  padding-bottom: 10px;
+  display: inline-block;
+}
+
+/* ===================== BUTTONS ===================== */
+button.primary {
+  background: var(--gradient-primary);
+  color: white;
+  border: none;
+  padding: 14px 28px;
+  border-radius: 50px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 16px;
+  box-shadow: 0 10px 20px rgba(58, 134, 255, 0.3);
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+}
+
+button.primary::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 100%;
+  background: var(--gradient-secondary);
+  transition: all 0.4s ease;
+  z-index: -1;
+}
+
+button.primary:hover::after {
+  width: 100%;
+}
+
+button.primary:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 15px 30px rgba(58, 134, 255, 0.4);
+}
+
+button.secondary {
+  background: var(--gradient-secondary);
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 50px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 8px 15px rgba(255, 0, 110, 0.2);
+}
+
+button.secondary:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 20px rgba(255, 0, 110, 0.3);
+}
+
+/* ===================== FORM ===================== */
+.form-group {
+  margin-bottom: 20px;
+}
+
+label {
+  font-weight: 600;
+  font-size: 15px;
+  display: block;
+  margin-bottom: 8px;
+  color: var(--dark);
+}
+
+input, select {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 2px solid #e0e0e0;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 16px;
+  transition: all 0.3s;
+  color: var(--dark);
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(58, 134, 255, 0.2);
+  background: white;
+}
+
+/* ===================== GRID ===================== */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 25px;
+}
+
+/* Grid items default to min-width:auto and refuse to shrink below their
+   content, which pushed the itinerary card past its column and clipped the
+   plan. min-width:0 lets them shrink so content wraps instead of overflowing. */
+.grid > * { min-width: 0; }
+
+/* Nested grids (date pair, hotel/food pair) must not demand 350px inside an
+   already-narrow card — that was clipping the date inputs. */
+.card .grid { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; }
+
+/* Long titles, dish names and place names wrap instead of forcing overflow. */
+.ai-plan, .ai-plan .day-card, .ai-plan .stay-card, .ai-plan .info-card { min-width: 0; }
+.day-title, .slot .what, .stay-name, .info-card li, .plan-hero .route {
+  overflow-wrap: anywhere;
+}
+.stay-card { justify-content: space-between; }
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===================== HOME ===================== */
+.hero {
+  text-align: center;
+  padding: 60px 20px;
+  background: var(--gradient-primary);
+  border-radius: var(--radius);
+  color: white;
+  margin-bottom: 40px;
+  box-shadow: var(--shadow);
+}
+
+.hero h1 {
+  font-size: 3rem;
+  margin-bottom: 20px;
+  background: linear-gradient(to right, #FFD166, #FF9E00);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero p {
+  font-size: 1.2rem;
+  max-width: 600px;
+  margin: 0 auto 30px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.features {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 40px;
+}
+
+.feature {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 20px;
+  border-radius: 15px;
+  text-align: center;
+  flex: 1;
+  min-width: 200px;
+  backdrop-filter: blur(10px);
+}
+
+.feature i {
+  font-size: 2.5rem;
+  margin-bottom: 15px;
+  color: #FFD166;
+}
+
+/* ===================== PLANNER ===================== */
+#itinerary {
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 15px;
+  min-height: 300px;
+  border: 2px dashed var(--primary);
+}
+
+.itinerary-day {
+  background: white;
+  padding: 15px;
+  border-radius: 10px;
+  margin-bottom: 15px;
+  border-left: 5px solid var(--primary);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
+}
+
+.itinerary-day:nth-child(2n) {
+  border-left-color: var(--secondary);
+}
+
+/* ===================== AI TRAVEL PLAN (rich) ===================== */
+.ai-plan { display: flex; flex-direction: column; gap: 22px; }
+
+.plan-hero {
+  background: var(--gradient-primary);
+  color: #fff; border-radius: 16px; padding: 22px 24px;
+  box-shadow: 0 10px 30px rgba(58,134,255,.25);
+}
+.plan-hero .route {
+  font-size: 1.5rem; font-weight: 800; display: flex; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+}
+.plan-hero .route .arrow { opacity: .8; }
+.plan-hero .sub { margin-top: 6px; opacity: .95; font-size: .95rem; }
+.plan-hero .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.plan-hero .chip {
+  background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.35);
+  padding: 6px 12px; border-radius: 999px; font-size: .82rem; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.plan-hero .chip.ok { background: rgba(56,176,0,.95); border-color: transparent; }
+.plan-hero .chip.over { background: rgba(255,0,110,.95); border-color: transparent; }
+
+.plan-section-title {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 1.15rem; font-weight: 800; color: var(--dark); margin: 6px 0 2px;
+}
+.plan-section-title i { color: var(--primary); }
+
+.stay-card {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start;
+  background: #fff; border-radius: 14px; padding: 18px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.06); border-left: 5px solid var(--accent);
+}
+.stay-card .stay-main { flex: 1 1 240px; }
+.stay-card .stay-name { font-size: 1.15rem; font-weight: 800; color: var(--dark); }
+.stay-card .stay-loc { color: #666; font-size: .9rem; margin: 4px 0 8px; }
+.stay-card .stay-price { text-align: right; font-weight: 800; color: var(--primary); font-size: 1.2rem; }
+.stay-card .stay-price small { display:block; color:#888; font-weight:600; font-size:.72rem; }
+.mini-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mini-tag { background: rgba(58,134,255,.1); color: var(--primary);
+  padding: 3px 10px; border-radius: 999px; font-size: .75rem; font-weight: 600; }
+
+.day-card {
+  background: #fff; border-radius: 14px; padding: 16px 18px;
+  box-shadow: 0 5px 15px rgba(0,0,0,.05); border-left: 5px solid var(--primary);
+}
+.day-card.alt { border-left-color: var(--secondary); }
+.day-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.day-badge {
+  background: var(--gradient-primary); color: #fff; font-weight: 800;
+  padding: 4px 12px; border-radius: 999px; font-size: .8rem; white-space: nowrap;
+}
+.day-title { font-weight: 800; color: var(--dark); font-size: 1.02rem; }
+.slot { display: flex; gap: 10px; padding: 8px 0; border-top: 1px dashed #eee; }
+.slot:first-of-type { border-top: none; }
+.slot .when { min-width: 82px; font-weight: 700; color: var(--accent); font-size: .82rem; }
+.slot .what { flex: 1; color: #444; font-size: .92rem; line-height: 1.5; }
+.cat-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: .7rem; font-weight: 700;
+  padding: 2px 9px; border-radius: 999px; margin-left: 4px; vertical-align: middle;
+}
+.cat-history  { background: rgba(131,56,236,.12); color: var(--accent); }
+.cat-nature   { background: rgba(56,176,0,.14); color: var(--success); }
+.cat-food     { background: rgba(255,158,0,.18); color: #b46b00; }
+.cat-shopping { background: rgba(255,0,110,.12); color: var(--secondary); }
+.cat-culture  { background: rgba(58,134,255,.12); color: var(--primary); }
+
+.info-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 14px; }
+.info-card { background: #fff; border-radius: 14px; padding: 16px 18px; box-shadow: 0 5px 15px rgba(0,0,0,.05); }
+.info-card.food { border-top: 4px solid var(--warning); }
+.info-card.history { border-top: 4px solid var(--accent); }
+.info-card h4 { margin: 0 0 10px; color: var(--dark); font-size: 1rem; display:flex; gap:8px; align-items:center; }
+.info-card ul { margin: 0; padding: 0; list-style: none; }
+.info-card li { padding: 7px 0; border-bottom: 1px solid #f2f2f2; font-size: .9rem; color: #555; }
+.info-card li:last-child { border-bottom: none; }
+.info-card li strong { color: var(--dark); }
+
+.plan-budget-footer { background: var(--dark); color: #fff; border-radius: 16px; padding: 20px 22px; }
+.plan-budget-footer .pb-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: .95rem; opacity: .92; }
+.plan-budget-footer .pb-total { display: flex; justify-content: space-between; margin-top: 10px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.2); font-size: 1.2rem; font-weight: 800; }
+.plan-budget-footer .pb-remain { margin-top: 10px; font-weight: 700; }
+
+/* ===================== CITY AUTOCOMPLETE ===================== */
+.ac-list {
+  position: absolute; z-index: 60; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1px solid #e6e6e6; border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.14); margin-top: 6px;
+  max-height: 260px; overflow-y: auto; display: none;
+}
+.ac-list.open { display: block; }
+.ac-item {
+  padding: 10px 14px; cursor: pointer; display: flex; align-items: center;
+  gap: 10px; font-size: .95rem; color: #333; border-bottom: 1px solid #f4f4f4;
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item i { color: var(--primary); width: 16px; text-align: center; }
+.ac-item:hover, .ac-item.active { background: rgba(58,134,255,.1); }
+.ac-item .ac-name { font-weight: 600; }
+.ac-item .ac-name b { color: var(--secondary); }
+.ac-item .ac-prov { margin-left: auto; color: #999; font-size: .78rem; }
+.ac-empty { padding: 12px 14px; color: #999; font-size: .9rem; }
+
+/* ===================== TRAVEL OPTIONS DISPLAY ===================== */
+.travel-option-card {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 15px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-left: 4px solid var(--primary);
+  transition: all 0.3s ease;
+}
+
+.travel-option-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+.travel-option-card.train {
+  border-left-color: #FF9E00;
+}
+
+.travel-option-card.bus {
+  border-left-color: #38B000;
+}
+
+.travel-option-card.flight {
+  border-left-color: #3A86FF;
+}
+
+.travel-option-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.travel-option-name {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--dark);
+}
+
+.travel-option-price {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.travel-option-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.travel-option-detail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.travel-option-detail i {
+  color: var(--primary);
+}
+
+.travel-option-classes {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.class-option {
+  display: inline-block;
+  padding: 8px 15px;
+  margin: 5px;
+  background: rgba(58, 134, 255, 0.1);
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.class-option .price {
+  color: var(--primary);
+  margin-left: 5px;
+}
+
+/* ===================== HOTEL CARDS ===================== */
+.hotel-card {
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+  border-left: 4px solid var(--primary);
+  transition: all 0.3s ease;
+  display: grid;
+  grid-template-columns: 1fr 200px;
+  gap: 20px;
+}
+
+.hotel-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+.hotel-card.medium {
+  border-left-color: #38B000;
+}
+
+.hotel-card.economy {
+  border-left-color: #FF9E00;
+}
+
+.hotel-card.premium {
+  border-left-color: #8338EC;
+}
+
+.hotel-info {
+  flex: 1;
+}
+
+.hotel-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--dark);
+  margin-bottom: 8px;
+}
+
+.hotel-location {
+  color: #666;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hotel-location i {
+  color: var(--primary);
+}
+
+.hotel-description {
+  color: #555;
+  margin-bottom: 15px;
+  font-size: 0.95rem;
+}
+
+.hotel-amenities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.amenity-tag {
+  background: rgba(58, 134, 255, 0.1);
+  color: var(--primary);
+  padding: 5px 12px;
+  border-radius: 15px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.hotel-rating {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #FF9E00;
+  font-weight: 600;
+}
+
+.hotel-pricing {
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.hotel-price {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--primary);
+  margin-bottom: 5px;
+}
+
+.hotel-price-label {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.hotel-plan-badge {
+  display: inline-block;
+  padding: 6px 15px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-top: 10px;
+}
+
+.hotel-plan-badge.medium {
+  background: rgba(56, 176, 0, 0.2);
+  color: #38B000;
+}
+
+.hotel-plan-badge.economy {
+  background: rgba(255, 158, 0, 0.2);
+  color: #FF9E00;
+}
+
+.hotel-plan-badge.premium {
+  background: rgba(131, 56, 236, 0.2);
+  color: #8338EC;
+}
+
+@media (max-width: 768px) {
+  .hotel-card {
+    grid-template-columns: 1fr;
+  }
+  
+  .hotel-pricing {
+    text-align: left;
+    margin-top: 15px;
+  }
+}
+
+/* ===================== TRAVEL OPTIONS STYLES ===================== */
+.travel-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.travel-option {
+  padding: 15px;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: white;
+}
+
+.travel-option.selected {
+  border-color: var(--primary);
+  background: rgba(58, 134, 255, 0.1);
+  transform: translateY(-5px);
+  box-shadow: 0 10px 20px rgba(58, 134, 255, 0.2);
+}
+
+.travel-option i {
+  font-size: 2rem;
+  margin-bottom: 10px;
+  display: block;
+}
+
+.travel-option.bus i { color: #38B000; }
+.travel-option.train i { color: #FF9E00; }
+.travel-option.airplane i { color: #3A86FF; }
+
+.plan-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.plan-option {
+  padding: 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 10px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  background: white;
+  font-weight: 600;
+}
+
+.plan-option.medium {
+  background: rgba(56, 176, 0, 0.1);
+  border-color: #38B000;
+}
+
+.plan-option.economy {
+  background: rgba(255, 158, 0, 0.1);
+  border-color: #FF9E00;
+}
+
+.plan-option.premium {
+  background: rgba(131, 56, 236, 0.1);
+  border-color: #8338EC;
+}
+
+/* Selected state — per-type rules (specificity 0-3-0) so they win over the
+   plain .plan-option.medium/economy/premium rules above regardless of order. */
+.plan-option.selected {
+  transform: translateY(-3px);
+  font-weight: 800;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06), 0 10px 22px rgba(0, 0, 0, 0.18);
+  position: relative;
+}
+.plan-option.selected::after {
+  content: "\f00c";
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.plan-option.medium.selected  { background: rgba(56, 176, 0, 0.30);  border-color: #2d8f00; color: #1f6b00; }
+.plan-option.economy.selected { background: rgba(255, 158, 0, 0.32); border-color: #cc7a00; color: #8a5300; }
+.plan-option.premium.selected { background: rgba(131, 56, 236, 0.28); border-color: #6f2fce; color: #4b1f97; }
+.plan-option.medium.selected::after  { background: #2d8f00; }
+.plan-option.economy.selected::after { background: #cc7a00; }
+.plan-option.premium.selected::after { background: #6f2fce; }
+
+.price-tag {
+  display: inline-block;
+  background: var(--secondary);
+  color: white;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.9rem;
+  margin-left: 5px;
+}
+
+/* ===================== BUDGET ===================== */
+.budget-summary {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 30px;
+}
+
+.budget-item {
+  background: white;
+  padding: 20px;
+  border-radius: 15px;
+  text-align: center;
+  flex: 1;
+  min-width: 150px;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.05);
+  border-top: 5px solid var(--primary);
+}
+
+.budget-item:nth-child(2) {
+  border-top-color: var(--secondary);
+}
+
+.budget-item:nth-child(3) {
+  border-top-color: var(--accent);
+}
+
+.budget-item h3 {
+  margin: 0 0 10px 0;
+  color: var(--dark);
+}
+
+.budget-item .amount {
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+/* ===================== TOURISM ===================== */
+.city-card {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s ease;
+}
+
+.city-card:hover {
+  transform: scale(1.03);
+}
+
+.city-image {
+  height: 200px;
+  width: 100%;
+  object-fit: cover;
+  border-radius: 15px;
+  margin-bottom: 15px;
+}
+
+.city-tag {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: var(--gradient-secondary);
+  color: white;
+  padding: 5px 15px;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* ===================== SAVED ===================== */
+.saved-plan {
+  background: white;
+  padding: 20px;
+  border-radius: 15px;
+  margin-bottom: 15px;
+  border-left: 5px solid var(--success);
+  position: relative;
+}
+
+.saved-plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.saved-plan-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.delete-btn {
+  background: var(--secondary);
+  color: white;
+  border: none;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* ===================== FOOTER ===================== */
+footer {
+  text-align: center;
+  padding: 30px;
+  margin-top: 50px;
+  background: var(--dark);
+  color: white;
+  border-top: 5px solid var(--primary);
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.social-icons {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.social-icons a {
+  color: white;
+  font-size: 1.5rem;
+  transition: all 0.3s;
+}
+
+.social-icons a:hover {
+  color: var(--primary);
+  transform: translateY(-5px);
+}
+
+/* ===================== ANIMATIONS ===================== */
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+/* ===================== RESPONSIVE ===================== */
+@media (max-width: 768px) {
+  nav {
+    flex-direction: column;
+    padding: 15px;
+    gap: 15px;
+  }
+  
+  .nav-buttons {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  
+  .hero h1 {
+    font-size: 2.2rem;
+  }
+  
+  section {
+    padding: 0 15px;
+  }
+  
+  .card {
+    padding: 20px;
+  }
+  
+  .travel-options,
+  .plan-options {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ===================== NAV ===================== -->
+<nav>
+  <div class="logo">
+    <i class="fas fa-compass fa-2x" style="color: #FFD166;"></i>
+    <h2>AI Smart Travel Planner</h2>
+  </div>
+  <div class="nav-buttons">
+    <button onclick="showPage('home')"><i class="fas fa-home"></i> Home</button>
+    <button onclick="showPage('planner')"><i class="fas fa-map-marked-alt"></i> Planner</button>
+    <button onclick="showPage('saved')"><i class="fas fa-bookmark"></i> Saved</button>
+    <button onclick="showPage('tourism')"><i class="fas fa-monument"></i> Tourists Places</button>
+    <button onclick="showPage('about')"><i class="fas fa-info-circle"></i> About Us</button>
+  </div>
+</nav>
+
+<!-- ===================== HOME ===================== -->
+<section id="home">
+  <div class="hero">
+    <h1>Plan Smarter. Travel Better ✈️</h1>
+    <p>Tell your budget — We Plan the Tour.</p>
+    <button class="primary pulse" onclick="showPage('planner')">Start Planning Now</button>
+  </div>
+  
+  <div class="features">
+    <div class="feature">
+      <i class="fas fa-robot"></i>
+      <h3>AI-Powered</h3>
+      <p>Smart algorithms create optimal itineraries</p>
+    </div>
+    <div class="feature">
+      <i class="fas fa-wallet"></i>
+      <h3>Budget-Friendly</h3>
+      <p>Stay within your budget with smart tracking</p>
+    </div>
+    <div class="feature">
+      <i class="fas fa-map-pin"></i>
+      <h3>Discover Places</h3>
+      <p>Explore tourist spots across Pakistan</p>
+    </div>
+    <div class="feature">
+      <i class="fas fa-save"></i>
+      <h3>Save Plans</h3>
+      <p>Store and revisit your travel plans</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PLANNER ===================== -->
+<section id="planner" class="hidden">
+  <div class="grid">
+    <div class="card">
+      <h2><i class="fas fa-plus-circle"></i> Create Your Travel Plan</h2>
+      
+      <div class="form-group">
+        <label><i class="fas fa-map-marker-alt"></i> From (City)</label>
+        <input id="from" placeholder="Type a city, e.g. Lah… → Lahore" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label><i class="fas fa-flag-checkered"></i> To (Destination)</label>
+        <input id="to" placeholder="Type a city, e.g. Kar… → Karachi" autocomplete="off">
+      </div>
+      
+      <div class="grid">
+        <div class="form-group">
+          <label><i class="fas fa-calendar-day"></i> Start Date</label>
+          <input type="date" id="startDate">
+        </div>
+        <div class="form-group">
+          <label><i class="fas fa-calendar-day"></i> End Date</label>
+          <input type="date" id="endDate">
+          <small style="color: #666; display: block; margin-top: 5px;">We'll suggest tourist places based on your stay duration</small>
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label><i class="fas fa-wallet"></i> Total Budget (PKR)</label>
+        <input type="number" id="budget" placeholder="Enter your total budget">
+      </div>
+      
+      <!-- Travel Mode Selection -->
+      <div class="form-group">
+        <label><i class="fas fa-car-side"></i> Travel Mode</label>
+        <div class="travel-options">
+          <div class="travel-option bus" onclick="selectTravelMode('bus')">
+            <i class="fas fa-bus"></i>
+            <div>Bus</div>
+            <small>Budget-friendly</small>
+          </div>
+          <div class="travel-option train" onclick="selectTravelMode('train')">
+            <i class="fas fa-train"></i>
+            <div>Train</div>
+            <small>Comfort & Scenic</small>
+          </div>
+          <div class="travel-option airplane" onclick="selectTravelMode('airplane')">
+            <i class="fas fa-plane"></i>
+            <div>Airplane</div>
+            <small>Fast & Efficient</small>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Travel Plan Type -->
+      <div class="form-group">
+        <label><i class="fas fa-crown"></i> Travel Plan Type</label>
+        <div class="plan-options">
+          <div class="plan-option medium" onclick="selectPlanType('medium')">
+            Medium Plan
+            <span class="price-tag">Budget</span>
+          </div>
+          <div class="plan-option economy" onclick="selectPlanType('economy')">
+            Economy Plan
+            <span class="price-tag">Standard</span>
+          </div>
+          <div class="plan-option premium" onclick="selectPlanType('premium')">
+            Premium Plan
+            <span class="price-tag">Luxury</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="grid">
+        <div class="form-group">
+          <label><i class="fas fa-hotel"></i> Hotel / Night (PKR)</label>
+          <input type="number" id="hotel" value="4000">
+        </div>
+        <div class="form-group">
+          <label><i class="fas fa-utensils"></i> Food / Day (PKR)</label>
+          <input type="number" id="food" value="1200">
+        </div>
+      </div>
+      
+      <br>
+      <button class="primary" onclick="generatePlan()"><i class="fas fa-magic"></i> Generate AI Plan</button>
+      <button class="secondary" onclick="savePlan()"><i class="fas fa-save"></i> Save This Plan</button>
+    </div>
+
+    <div class="card">
+      <h2><i class="fas fa-route"></i> Your Itinerary</h2>
+      <div id="itinerary">
+        <p style="text-align: center; color: #888; padding: 50px 20px;">
+          <i class="fas fa-map fa-3x" style="color: #e0e0e0; margin-bottom: 20px;"></i><br>
+          Your travel itinerary will appear here after you generate a plan.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BUDGET ===================== -->
+<section id="budget" class="hidden">
+  <div class="card">
+    <h2><i class="fas fa-chart-pie"></i> Budget Breakdown</h2>
+    <div style="max-width: 500px; margin: 0 auto;">
+      <canvas id="chart"></canvas>
+    </div>
+    
+    <div class="budget-summary">
+      <div class="budget-item">
+        <h3>Hotel Cost</h3>
+        <div class="amount" id="hotelCost">PKR 0</div>
+      </div>
+      <div class="budget-item">
+        <h3>Food Cost</h3>
+        <div class="amount" id="foodCost">PKR 0</div>
+      </div>
+      <div class="budget-item">
+        <h3>Travel Cost</h3>
+        <div class="amount" id="travelCost">PKR 0</div>
+      </div>
+      <div class="budget-item">
+        <h3>Total</h3>
+        <div class="amount" id="totalCost">PKR 0</div>
+      </div>
+    </div>
+    
+    <div id="planDetails" style="margin-top: 30px; padding: 20px; background: rgba(58, 134, 255, 0.1); border-radius: 15px;">
+      <h3><i class="fas fa-info-circle"></i> Plan Details</h3>
+      <div id="planInfo">Select travel mode and plan type to see details</div>
+    </div>
+    
+    <br>
+    <div style="text-align: center;">
+      <button class="primary" onclick="window.print()"><i class="fas fa-file-pdf"></i> Download PDF Report</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TOURISM ===================== -->
+<section id="tourism" class="hidden">
+  <div class="card" style="text-align: center;">
+    <h1 style="color: var(--accent);"><i class="fas fa-monument"></i> Tourist Places of Pakistan 🇵🇰</h1>
+    <p>Discover the cultural, historical, and natural beauty of Pakistan's most stunning destinations.</p>
+  </div>
+
+  <div class="grid">
+    <!-- ISLAMABAD -->
+    <div class="card city-card">
+      <div class="city-tag">Capital</div>
+      <h2>Islamabad</h2>
+      <img src="ChatGPT Image Jan 21, 2026, 12_20_34 AM.png" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Islamabad is the capital city of Pakistan, known for its greenery and peaceful environment.
+        Faisal Mosque, Margalla Hills, and Daman-e-Koh are major attractions.
+        It is one of the most well-planned and cleanest cities in the country.
+      </p>
+    </div>
+    
+
+    <!-- LAHORE -->
+    <div class="card city-card">
+      <div class="city-tag">Cultural Hub</div>
+      <h2>Lahore</h2>
+      <img src="ChatGPT Image Jan 21, 2026, 12_34_16 AM.png" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star-half-alt" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Lahore is the cultural heart of Pakistan.
+        Badshahi Mosque, Lahore Fort, and Shalimar Gardens reflect Mughal heritage.
+        The city is famous for its food, festivals, and historical landmarks.
+      </p>
+    </div>
+
+    <!-- KARACHI -->
+    <div class="card city-card">
+      <div class="city-tag">Economic Hub</div>
+      <h2>Karachi</h2>
+      <img src="ChatGPT Image Jan 21, 2026, 12_36_24 AM.png" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Karachi is Pakistan's largest city and economic hub.
+        Clifton Beach, Quaid-e-Azam Mausoleum, and Port Grand are major attractions.
+        The city offers a vibrant mix of culture, business, and seaside views.
+      </p>
+    </div>
+
+    <!-- SKARDU -->
+    <div class="card city-card">
+      <div class="city-tag">Mountain Paradise</div>
+      <h2>Skardu</h2>
+      <img src="EgzRNEiwXoQdYYriBJZ4pfaOqAZtEE-metaU2hhbmdyaWxhLF9Mb3dlcl9LYWNodXJhX0xha2UuanBn-.jpg" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Skardu is famous for breathtaking mountains and lakes.
+        Shangrila Lake, Satpara Lake, and Deosai Plains attract tourists worldwide.
+        It is a gateway to some of the world's highest peaks.
+      </p>
+    </div>
+
+    <!-- HUNZA -->
+    <div class="card city-card">
+      <div class="city-tag">Valley of Beauty</div>
+      <h2>Hunza Valley</h2>
+      <img src="passu-valley-hunza-valley.jpg" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Hunza Valley is known for its natural beauty and peaceful lifestyle.
+        Baltit Fort, Altit Fort, and Rakaposhi views are breathtaking.
+        It is one of the most beautiful tourist destinations in Pakistan.
+      </p>
+    </div>
+
+    <!-- SWAT -->
+    <div class="card city-card">
+      <div class="city-tag">Switzerland of East</div>
+      <h2>Swat Valley</h2>
+      <img src="https://images.unsplash.com/photo-1593693397690-362cb9666fc2" class="city-image">
+      <p>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star" style="color: #FFD700;"></i>
+        <i class="fas fa-star-half-alt" style="color: #FFD700;"></i>
+      </p>
+      <p>
+        Swat Valley is known for its stunning landscapes, rivers, and mountains.
+        Malam Jabba, Mahodand Lake, and Swat Museum are popular attractions.
+        It's often called the "Switzerland of the East" for its beauty.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SAVED ===================== -->
+<section id="saved" class="hidden">
+  <div class="card">
+    <h2><i class="fas fa-bookmark"></i> Saved Travel Plans</h2>
+    <div id="savedList">
+      <p style="text-align: center; color: #888; padding: 30px;">
+        <i class="fas fa-inbox fa-3x" style="color: #e0e0e0; margin-bottom: 15px;"></i><br>
+        No saved plans yet. Generate and save a plan to see it here.
+      </p>
+    </div>
+    <br>
+    <div style="text-align: center;">
+      <button class="secondary" onclick="clearAllPlans()"><i class="fas fa-trash"></i> Clear All Plans</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ABOUT US ===================== -->
+<section id="about" class="hidden">
+  <div class="card" style="text-align: center; background: linear-gradient(135deg, var(--primary), var(--accent)); color: white;">
+    <h1 style="color: white; margin-bottom: 10px;"><i class="fas fa-info-circle"></i> About AI Smart Travel Planner</h1>
+    <p style="font-size: 1.2rem; opacity: 0.9;">Revolutionizing travel planning with cutting-edge AI technology</p>
+  </div>
+
+  <!-- Our Story -->
+  <div class="card">
+    <div class="grid">
+      <div style="display: flex; flex-direction: column; justify-content: center;">
+        <h2><i class="fas fa-rocket" style="color: var(--primary);"></i> Our Story</h2>
+        <p>Founded in 2025 by passionate travelers and AI enthusiasts, we recognized a common problem: <strong>travel planning is stressful and time-consuming</strong>. Most people spend weeks researching, comparing prices, and building itineraries.</p>
+        <p>We combined <span style="color: var(--primary); font-weight: bold;">Artificial Intelligence</span> with <span style="color: var(--secondary); font-weight: bold;">travel expertise</span> to create a solution that generates personalized travel plans in minutes, not days.</p>
+      </div>
+      <div style="text-align: center;">
+        <div style="font-size: 8rem; color: var(--primary); opacity: 0.7;">
+          <i class="fas fa-mountain"></i>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What We Offer -->
+  <div class="card">
+    <h2 style="text-align: center;"><i class="fas fa-star" style="color: #FFD700;"></i> What We Offer</h2>
+    <div class="grid" style="margin-top: 20px;">
+      <div class="card" style="background: rgba(58, 134, 255, 0.05); text-align: center;">
+        <div style="width: 70px; height: 70px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), var(--accent)); margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.8rem;">
+          <i class="fas fa-brain"></i>
+        </div>
+        <h3>AI-Powered Itineraries</h3>
+        <p>Our intelligent algorithms analyze preferences, budget, and time to create optimal travel plans</p>
+      </div>
+      
+      <div class="card" style="background: rgba(255, 0, 110, 0.05); text-align: center;">
+        <div style="width: 70px; height: 70px; border-radius: 50%; background: linear-gradient(135deg, var(--secondary), var(--warning)); margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.8rem;">
+          <i class="fas fa-chart-line"></i>
+        </div>
+        <h3>Smart Budgeting</h3>
+        <p>Real-time expense tracking and cost optimization to maximize your travel experience</p>
+      </div>
+      
+      <div class="card" style="background: rgba(131, 56, 236, 0.05); text-align: center;">
+        <div style="width: 70px; height: 70px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--primary)); margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1.8rem;">
+          <i class="fas fa-map"></i>
+        </div>
+        <h3>Discover Hidden Gems</h3>
+        <p>Explore local attractions, restaurants, and experiences curated by our travel experts</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Statistics -->
+  <div class="card" style="background: linear-gradient(135deg, #1A1A2E, #16213E); color: white;">
+    <h2 style="text-align: center; color: white;"><i class="fas fa-chart-bar"></i> Our Impact</h2>
+    <div class="grid" style="margin-top: 30px; text-align: center;">
+      <div>
+        <div class="stat-number" style="font-size: 3rem; font-weight: 800; color: var(--primary);">5,000+</div>
+        <div style="font-size: 1.1rem;">Travelers Served</div>
+      </div>
+      <div>
+        <div class="stat-number" style="font-size: 3rem; font-weight: 800; color: var(--secondary);">15,000+</div>
+        <div style="font-size: 1.1rem;">Trips Planned</div>
+      </div>
+      <div>
+        <div class="stat-number" style="font-size: 3rem; font-weight: 800; color: var(--accent);">PKR 2.5B+</div>
+        <div style="font-size: 1.1rem;">Budget Managed</div>
+      </div>
+      <div>
+        <div class="stat-number" style="font-size: 3rem; font-weight: 800; color: #38B000;">4.8★</div>
+        <div style="font-size: 1.1rem;">User Rating</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Technology Stack -->
+  <div class="card">
+    <h2><i class="fas fa-cogs" style="color: var(--accent);"></i> Our Technology</h2>
+    <p>We leverage advanced technologies to deliver the best travel planning experience:</p>
+    
+    <div class="grid" style="margin-top: 20px;">
+      <div style="background: rgba(58, 134, 255, 0.1); padding: 20px; border-radius: 12px; text-align: center;">
+        <h3><i class="fas fa-robot" style="color: var(--primary);"></i> Machine Learning</h3>
+        <p>Algorithms that learn from thousands of travel patterns</p>
+      </div>
+      
+      <div style="background: rgba(255, 0, 110, 0.1); padding: 20px; border-radius: 12px; text-align: center;">
+        <h3><i class="fas fa-database" style="color: var(--secondary);"></i> Big Data</h3>
+        <p>Analyzing millions of data points for accurate recommendations</p>
+      </div>
+      
+      <div style="background: rgba(131, 56, 236, 0.1); padding: 20px; border-radius: 12px; text-align: center;">
+        <h3><i class="fas fa-mobile-alt" style="color: var(--accent);"></i> Mobile-First</h3>
+        <p>Responsive design that works seamlessly on all devices</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Call to Action -->
+  <div class="card" style="text-align: center; background: linear-gradient(135deg, var(--secondary), var(--warning)); color: white;">
+    <h2 style="color: white;">Ready to Transform Your Travel Experience?</h2>
+    <p style="font-size: 1.2rem; margin-bottom: 30px;">Join thousands of smart travelers who trust AI Smart Travel Planner</p>
+    <button class="primary" onclick="showPage('planner')" style="background: white; color: var(--secondary); font-size: 1.1rem; padding: 15px 35px;">
+      <i class="fas fa-plane"></i> Start Planning Now
+    </button>
+    <button class="secondary" onclick="showPage('tourism')" style="background: rgba(255, 255, 255, 0.2); border: 2px solid white; margin-left: 15px; padding: 15px 35px;">
+      <i class="fas fa-map-marked-alt"></i> Explore Destinations
+    </button>
+  </div>
+  
+</section>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <div class="footer-content">
+    <h3>AI Smart Travel Planner</h3>
+    <p>Plan your perfect trip with AI-powered recommendations and budget tracking</p>
+    
+    <div class="social-icons">
+      <a href="#"><i class="fab fa-facebook"></i></a>
+      <a href="#"><i class="fab fa-twitter"></i></a>
+      <a href="#"><i class="fab fa-instagram"></i></a>
+      <a href="#"><i class="fab fa-youtube"></i></a>
+    </div>
+    
+    <p>&copy; 2026 AI Smart Travel Planner. All rights are reserved.</p>
+  </div>
+</footer>
+
+<!-- ===================== SCRIPT ===================== -->
+<script>
+// -------- VARIABLES --------
+let chart;
+let selectedTravelMode = 'bus';
+let selectedPlanType = 'medium';
+
+// Database of tourist places for each city
+const touristPlaces = {
+  'lahore': [
+    { name: "Minar-e-Pakistan", description: "Iconic national monument", time: "Morning", duration: "2 hours" },
+    { name: "Badshahi Mosque", description: "One of the largest mosques in the world", time: "Morning", duration: "2 hours" },
+    { name: "Lahore Fort", description: "Historical Mughal fort", time: "Afternoon", duration: "3 hours" },
+    { name: "Shalimar Gardens", description: "UNESCO World Heritage Site", time: "Afternoon", duration: "2 hours" },
+    { name: "Anarkali Bazaar", description: "Famous traditional market", time: "Evening", duration: "3 hours" },
+    { name: "Food Street", description: "Traditional Pakistani cuisine", time: "Evening", duration: "2 hours" },
+    { name: "Lahore Museum", description: "Historical artifacts museum", time: "Morning", duration: "2 hours" },
+    { name: "Wazir Khan Mosque", description: "Ornate Mughal architecture", time: "Afternoon", duration: "1.5 hours" }
+  ],
+  'islamabad': [
+    { name: "Faisal Mosque", description: "Largest mosque in Pakistan", time: "Morning", duration: "2 hours" },
+    { name: "Margalla Hills", description: "Hiking trails and viewpoints", time: "Morning", duration: "4 hours" },
+    { name: "Daman-e-Koh", description: "Hilltop garden and viewpoint", time: "Afternoon", duration: "2 hours" },
+    { name: "Pakistan Monument", description: "National monument and museum", time: "Afternoon", duration: "2 hours" },
+    { name: "Lok Virsa Museum", description: "Cultural heritage museum", time: "Morning", duration: "2 hours" },
+    { name: "Centaurus Mall", description: "Shopping and entertainment", time: "Evening", duration: "3 hours" },
+    { name: "Rawal Lake", description: "Picnic and boating spot", time: "Afternoon", duration: "3 hours" }
+  ],
+  'karachi': [
+    { name: "Clifton Beach", description: "Popular beach and waterfront", time: "Evening", duration: "3 hours" },
+    { name: "Quaid-e-Azam Mausoleum", description: "Tomb of Muhammad Ali Jinnah", time: "Morning", duration: "2 hours" },
+    { name: "Port Grand", description: "Food and entertainment complex", time: "Evening", duration: "3 hours" },
+    { name: "Mohatta Palace", description: "Historic palace museum", time: "Afternoon", duration: "2 hours" },
+    { name: "Dolmen Mall", description: "Largest shopping mall", time: "Afternoon", duration: "3 hours" },
+    { name: "Frere Hall", description: "Victorian-era building", time: "Morning", duration: "1.5 hours" },
+    { name: "Empress Market", description: "Historic marketplace", time: "Morning", duration: "2 hours" }
+  ],
+  'skardu': [
+    { name: "Shangrila Resort", description: "Beautiful resort with lake", time: "Morning", duration: "3 hours" },
+    { name: "Satpara Lake", description: "Crystal clear mountain lake", time: "Afternoon", duration: "3 hours" },
+    { name: "Deosai Plains", description: "Highest plateau in the world", time: "Full Day", duration: "8 hours" },
+    { name: "Kachura Lake", description: "Upper and Lower lakes", time: "Morning", duration: "3 hours" },
+    { name: "Skardu Fort", description: "Historical fort ruins", time: "Afternoon", duration: "2 hours" }
+  ],
+  'hunza': [
+    { name: "Baltit Fort", description: "Ancient fort with panoramic views", time: "Morning", duration: "2 hours" },
+    { name: "Altit Fort", description: "Oldest fort in Hunza", time: "Afternoon", duration: "2 hours" },
+    { name: "Attabad Lake", description: "Turquoise blue lake", time: "Morning", duration: "3 hours" },
+    { name: "Passu Cones", description: "Iconic mountain peaks", time: "Afternoon", duration: "2 hours" },
+    { name: "Hussaini Bridge", description: "Suspension bridge over river", time: "Morning", duration: "1.5 hours" }
+  ],
+  'swat': [
+    { name: "Malam Jabba", description: "Ski resort and chairlift", time: "Morning", duration: "4 hours" },
+    { name: "Mahodand Lake", description: "Beautiful alpine lake", time: "Full Day", duration: "8 hours" },
+    { name: "Swat Museum", description: "Archaeological artifacts", time: "Afternoon", duration: "2 hours" },
+    { name: "Fizagat Park", description: "River-side park", time: "Evening", duration: "2 hours" },
+    { name: "Mingora Bazaar", description: "Local shopping market", time: "Afternoon", duration: "3 hours" }
+  ],
+  'multan': [
+    { name: "Shrine of Bahauddin Zakariya", description: "Sufi shrine", time: "Morning", duration: "2 hours" },
+    { name: "Shrine of Shah Rukn-e-Alam", description: "Historical shrine", time: "Afternoon", duration: "2 hours" },
+    { name: "Multan Fort", description: "Ancient fort ruins", time: "Morning", duration: "2 hours" },
+    { name: "Ghanta Ghar", description: "Clock Tower and market", time: "Evening", duration: "2 hours" }
+  ],
+  'peshawar': [
+    { name: "Qissa Khwani Bazaar", description: "Historical storytellers' market", time: "Morning", duration: "3 hours" },
+    { name: "Peshawar Museum", description: "Archaeological museum", time: "Afternoon", duration: "2 hours" },
+    { name: "Bala Hisar Fort", description: "Historical fort", time: "Morning", duration: "2 hours" },
+    { name: "Mahabat Khan Mosque", description: "Mughal-era mosque", time: "Afternoon", duration: "1.5 hours" }
+  ]
+};
+
+// -------- LOCAL CUISINE (per city) --------
+const cityCuisine = {
+  lahore:    { dishes: ['Nihari', 'Lahori Chargha', 'Phajjay ke Paye', 'Falooda'],        spot: 'Fort Road Food Street',      market: 'Anarkali Bazaar' },
+  islamabad: { dishes: ['Chapli Kabab', 'Pindi Cholay', 'Trout Fish', 'Kashmiri Chai'],   spot: 'Melody Food Park',           market: 'Jinnah Super Market' },
+  karachi:   { dishes: ['Sindhi Biryani', 'Bun Kabab', 'BBQ Seafood', 'Nihari'],          spot: 'Burns Road Food Street',     market: 'Empress Market' },
+  skardu:    { dishes: ['Balti Trout', 'Mamtu Dumplings', 'Apricot Soup', 'Butter Tea'],  spot: 'Yadgar Chowk Eateries',      market: 'Skardu Bazaar' },
+  hunza:     { dishes: ['Chapshuro', 'Hunza Walnut Cake', 'Diram Fitti', 'Apricot Delight'], spot: 'Karimabad Cafés',         market: 'Karimabad Bazaar' },
+  swat:      { dishes: ['Swat Trout Fish', 'Chapli Kabab', 'Swat Honey', 'Kabuli Pulao'], spot: 'Fizagat Riverside Eateries', market: 'Mingora Bazaar' },
+  multan:    { dishes: ['Sohan Halwa', 'Multani Chargha', 'Beef Karahi', 'Faluda'],       spot: 'Hussain Agahi Food Street',  market: 'Hussain Agahi Bazaar' },
+  peshawar:  { dishes: ['Chapli Kabab', 'Namkeen Karahi', 'Kabuli Pulao', 'Peshawari Ice Cream'], spot: 'Namak Mandi',        market: 'Qissa Khwani Bazaar' }
+};
+const defaultCuisine = { dishes: ['Chicken Karahi', 'Sindhi Biryani', 'Seekh Kabab', 'Kashmiri Chai'], spot: 'Main Food Street', market: 'Central Bazaar' };
+
+function cuisineFor(city) {
+  const c = (city || '').toLowerCase();
+  for (const k in cityCuisine) { if (c.includes(k)) return cityCuisine[k]; }
+  return defaultCuisine;
+}
+
+// Classify an attraction so we can tag it in the itinerary
+function catOfPlace(place) {
+  const s = ((place.name || '') + ' ' + (place.description || '')).toLowerCase();
+  if (/food|cuisine|restaurant|eat/.test(s))                             return { key: 'food',     label: 'Food',       icon: 'utensils' };
+  if (/bazaar|bazar|market|mall|shopping/.test(s))                       return { key: 'shopping', label: 'Shopping',   icon: 'bag-shopping' };
+  if (/lake|hill|beach|plain|park|cone|valley|bridge|resort|garden|trail|viewpoint|ski|mountain|plateau/.test(s))
+                                                                          return { key: 'nature',   label: 'Nature',     icon: 'mountain-sun' };
+  if (/fort|mosque|museum|shrine|monument|mausoleum|palace|hall|tomb|heritage|historic|clock tower|ghanta/.test(s))
+                                                                          return { key: 'history',  label: 'Historical', icon: 'landmark' };
+  return { key: 'culture', label: 'Culture', icon: 'star' };
+}
+
+function toTitleCase(s) { return (s || '').replace(/\b\w/g, c => c.toUpperCase()); }
+
+// Pick a hotel to recommend for the chosen plan type
+function recommendHotel(planType) {
+  return (currentHotels[planType] && currentHotels[planType][0]) || (currentHotels.all && currentHotels.all[0]) || null;
+}
+
+// -------- PAKISTAN CITY AUTOCOMPLETE --------
+const pakistanCities = [
+  { name: 'Karachi', province: 'Sindh' },
+  { name: 'Lahore', province: 'Punjab' },
+  { name: 'Islamabad', province: 'Capital' },
+  { name: 'Rawalpindi', province: 'Punjab' },
+  { name: 'Faisalabad', province: 'Punjab' },
+  { name: 'Multan', province: 'Punjab' },
+  { name: 'Peshawar', province: 'KPK' },
+  { name: 'Quetta', province: 'Balochistan' },
+  { name: 'Hyderabad', province: 'Sindh' },
+  { name: 'Gujranwala', province: 'Punjab' },
+  { name: 'Sialkot', province: 'Punjab' },
+  { name: 'Bahawalpur', province: 'Punjab' },
+  { name: 'Sargodha', province: 'Punjab' },
+  { name: 'Sukkur', province: 'Sindh' },
+  { name: 'Larkana', province: 'Sindh' },
+  { name: 'Sheikhupura', province: 'Punjab' },
+  { name: 'Mardan', province: 'KPK' },
+  { name: 'Gujrat', province: 'Punjab' },
+  { name: 'Kasur', province: 'Punjab' },
+  { name: 'Rahim Yar Khan', province: 'Punjab' },
+  { name: 'Sahiwal', province: 'Punjab' },
+  { name: 'Okara', province: 'Punjab' },
+  { name: 'Dera Ghazi Khan', province: 'Punjab' },
+  { name: 'Mirpur Khas', province: 'Sindh' },
+  { name: 'Nawabshah', province: 'Sindh' },
+  { name: 'Jhelum', province: 'Punjab' },
+  { name: 'Abbottabad', province: 'KPK' },
+  { name: 'Kohat', province: 'KPK' },
+  { name: 'Attock', province: 'Punjab' },
+  { name: 'Gilgit', province: 'Gilgit-Baltistan' },
+  { name: 'Skardu', province: 'Gilgit-Baltistan' },
+  { name: 'Hunza', province: 'Gilgit-Baltistan' },
+  { name: 'Chitral', province: 'KPK' },
+  { name: 'Swat', province: 'KPK' },
+  { name: 'Mingora', province: 'KPK' },
+  { name: 'Murree', province: 'Punjab' },
+  { name: 'Naran', province: 'KPK' },
+  { name: 'Kaghan', province: 'KPK' },
+  { name: 'Gwadar', province: 'Balochistan' },
+  { name: 'Muzaffarabad', province: 'AJK' },
+  { name: 'Mirpur', province: 'AJK' },
+  { name: 'Bahawalnagar', province: 'Punjab' },
+  { name: 'Khuzdar', province: 'Balochistan' },
+  { name: 'Dera Ismail Khan', province: 'KPK' },
+  { name: 'Nowshera', province: 'KPK' },
+  { name: 'Chiniot', province: 'Punjab' },
+  { name: 'Jacobabad', province: 'Sindh' },
+  { name: 'Turbat', province: 'Balochistan' },
+  { name: 'Wah Cantonment', province: 'Punjab' },
+  { name: 'Mansehra', province: 'KPK' }
+];
+
+// Attach a suggestion dropdown to a city input
+function setupCityAutocomplete(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  const wrap = input.parentElement;         // the .form-group
+  wrap.style.position = 'relative';
+  const list = document.createElement('div');
+  list.className = 'ac-list';
+  wrap.appendChild(list);
+
+  let matches = [];
+  let activeIndex = -1;
+
+  function closeList() {
+    list.classList.remove('open');
+    list.innerHTML = '';
+    activeIndex = -1;
+  }
+
+  function search(raw) {
+    const q = (raw || '').trim().toLowerCase();
+    if (!q) { closeList(); return; }
+    const starts = pakistanCities.filter(c => c.name.toLowerCase().startsWith(q));
+    const contains = pakistanCities.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q));
+    matches = starts.concat(contains).slice(0, 8);
+
+    if (!matches.length) {
+      list.innerHTML = '<div class="ac-empty">No matching city in Pakistan</div>';
+      list.classList.add('open');
+      return;
+    }
+    list.innerHTML = matches.map((c, i) => {
+      const idx = c.name.toLowerCase().indexOf(q);
+      const hl = idx < 0 ? c.name
+        : c.name.slice(0, idx) + '<b>' + c.name.slice(idx, idx + q.length) + '</b>' + c.name.slice(idx + q.length);
+      return `<div class="ac-item" data-i="${i}"><i class="fas fa-location-dot"></i><span class="ac-name">${hl}</span><span class="ac-prov">${c.province}</span></div>`;
+    }).join('');
+    activeIndex = -1;
+    list.classList.add('open');
+  }
+
+  function choose(i) {
+    if (i < 0 || i >= matches.length) return;
+    input.value = matches[i].name;
+    closeList();
+    input.dispatchEvent(new Event('change'));
+  }
+
+  input.addEventListener('input', () => search(input.value));
+  input.addEventListener('focus', () => { if (input.value) search(input.value); });
+  input.addEventListener('keydown', (e) => {
+    const items = list.querySelectorAll('.ac-item');
+    if (!list.classList.contains('open') || !items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = (activeIndex + 1) % items.length; }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = (activeIndex - 1 + items.length) % items.length; }
+    else if (e.key === 'Enter') { if (activeIndex >= 0) { e.preventDefault(); choose(activeIndex); } return; }
+    else if (e.key === 'Escape') { closeList(); return; }
+    else return;
+    items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+    if (activeIndex >= 0) items[activeIndex].scrollIntoView({ block: 'nearest' });
+  });
+
+  // mousedown (not click) so selection fires before the input's blur closes the list
+  list.addEventListener('mousedown', (e) => {
+    const item = e.target.closest('.ac-item');
+    if (item) { e.preventDefault(); choose(+item.dataset.i); }
+  });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) closeList(); });
+}
+
+// -------- SPA NAV --------
+function showPage(id) {
+  document.querySelectorAll("section").forEach(s => s.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+  
+  // Update nav button styles
+  document.querySelectorAll("nav button").forEach(btn => {
+    btn.style.background = "rgba(255, 255, 255, 0.15)";
+  });
+}
+
+// API Base URL
+const API_BASE_URL = 'http://localhost:3000/api';
+
+// -------- TEST SERVER CONNECTION --------
+async function testServerConnection() {
+  try {
+    const response = await fetch('http://localhost:3000/health');
+    if (response.ok) {
+      console.log('✅ Backend server is running');
+      return true;
+    }
+  } catch (error) {
+    console.warn('⚠️ Backend server is not running:', error.message);
+    return false;
+  }
+  return false;
+}
+
+// -------- FETCH TRAVEL OPTIONS --------
+async function fetchTravelOptions() {
+  const from = document.getElementById("from").value;
+  const to = document.getElementById("to").value;
+
+  if (!from || !to) return;
+
+  // Fetches route pricing and stores it for generatePlan()/getTravelCostFromAPI().
+  try {
+    const response = await fetch(`${API_BASE_URL}/travel-options?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    currentTravelOptions = await response.json();
+  } catch (error) {
+    console.error('Error fetching travel options:', error);
+  }
+}
+
+// -------- TRAVEL MODE SELECTION --------
+function selectTravelMode(mode) {
+  selectedTravelMode = mode;
+  
+  // Update UI
+  document.querySelectorAll('.travel-option').forEach(option => {
+    option.classList.remove('selected');
+  });
+  document.querySelector(`.travel-option.${mode}`).classList.add('selected');
+  
+  // Fetch and display travel options when mode is selected
+  fetchTravelOptions();
+  
+  // Also fetch hotels if destination is already set
+  const to = document.getElementById("to").value;
+  if (to) {
+    fetchHotels();
+  }
+
+  // Update plan info
+  updatePlanInfo();
+
+  // If a plan is already on screen, regenerate it to reflect the new travel mode
+  if (document.querySelector('#itinerary .ai-plan')) generatePlan();
+}
+
+// -------- PLAN TYPE SELECTION --------
+function selectPlanType(type) {
+  selectedPlanType = type;
+  
+  // Update UI
+  document.querySelectorAll('.plan-option').forEach(option => {
+    option.classList.remove('selected');
+  });
+  document.querySelector(`.plan-option.${type}`).classList.add('selected');
+
+  // Update plan info
+  updatePlanInfo();
+
+  // If a plan is already on screen, regenerate it to reflect the new plan type
+  if (document.querySelector('#itinerary .ai-plan')) generatePlan();
+}
+
+// -------- UPDATE PLAN INFO --------
+function updatePlanInfo() {
+  const travelModes = {
+    'bus': { 
+      name: 'Bus', 
+      icon: 'fas fa-bus',
+      description: 'Most economical option for short to medium distances',
+      mediumCost: 500,
+      economyCost: 1000,
+      premiumCost: 2000
+    },
+    'train': { 
+      name: 'Train', 
+      icon: 'fas fa-train',
+      description: 'Comfortable journey with scenic views',
+      mediumCost: 800,
+      economyCost: 1500,
+      premiumCost: 3000
+    },
+    'airplane': { 
+      name: 'Airplane', 
+      icon: 'fas fa-plane',
+      description: 'Fastest option for long distances',
+      mediumCost: 3000,
+      economyCost: 5000,
+      premiumCost: 10000
+    }
+  };
+  
+  const planTypes = {
+    'medium': { 
+      name: 'Medium Plan', 
+      description: 'Budget-friendly with basic amenities',
+      hotelMultiplier: 0.8,
+      foodMultiplier: 0.7
+    },
+    'economy': { 
+      name: 'Economy Plan', 
+      description: 'Standard comfort with good value',
+      hotelMultiplier: 1,
+      foodMultiplier: 1
+    },
+    'premium': { 
+      name: 'Premium Plan', 
+      description: 'Luxury experience with premium services',
+      hotelMultiplier: 1.5,
+      foodMultiplier: 2
+    }
+  };
+  
+  const mode = travelModes[selectedTravelMode];
+  const plan = planTypes[selectedPlanType];
+  
+  let travelCost = mode[`${selectedPlanType}Cost`];
+  
+  document.getElementById('planInfo').innerHTML = `
+    <div class="grid" style="margin-top: 10px;">
+      <div>
+        <h4><i class="${mode.icon}"></i> Travel Mode: ${mode.name}</h4>
+        <p>${mode.description}</p>
+        <p><strong>Cost:</strong> PKR ${travelCost} per person</p>
+      </div>
+      <div>
+        <h4><i class="fas fa-crown"></i> Plan Type: ${plan.name}</h4>
+        <p>${plan.description}</p>
+        <p><strong>Hotel:</strong> ${plan.hotelMultiplier}x standard rate</p>
+        <p><strong>Food:</strong> ${plan.foodMultiplier}x standard rate</p>
+      </div>
+    </div>
+  `;
+}
+
+// -------- CALCULATE DAYS DIFFERENCE --------
+function calculateDays() {
+  const startDate = new Date(document.getElementById("startDate").value);
+  const endDate = new Date(document.getElementById("endDate").value);
+  
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    return 3; // Default 3 days when dates aren't both set
+  }
+
+  // Signed difference — a value <= 0 means End is not after Start (caller handles it).
+  return Math.round((endDate - startDate) / (1000 * 60 * 60 * 24));
+}
+
+// -------- GET TOURIST PLACES FOR DESTINATION --------
+function getTouristPlaces(destination, days) {
+  const city = destination.toLowerCase();
+  
+  // Find matching city in database
+  for (const cityName in touristPlaces) {
+    if (city.includes(cityName)) {
+      const places = touristPlaces[cityName];
+      
+      // If more days than places, repeat some places
+      if (days > places.length) {
+        const repeatedPlaces = [...places];
+        while (repeatedPlaces.length < days) {
+          repeatedPlaces.push(...places.slice(0, Math.min(places.length, days - repeatedPlaces.length)));
+        }
+        return repeatedPlaces.slice(0, days);
+      }
+      
+      return places.slice(0, days);
+    }
+  }
+  
+  // Default places if city not found
+  return Array(days).fill().map((_, i) => ({
+    name: `Local Attraction ${i + 1}`,
+    description: "Explore local culture and heritage",
+    time: i === 0 ? "Morning" : i === days - 1 ? "Evening" : "Afternoon",
+    duration: "2-3 hours"
+  }));
+}
+
+// Store fetched travel options
+let currentTravelOptions = {
+  trains: [],
+  buses: [],
+  flights: []
+};
+
+// Store fetched hotels
+let currentHotels = {
+  all: [],
+  medium: [],
+  economy: [],
+  premium: []
+};
+
+// -------- FETCH HOTELS --------
+async function fetchHotels() {
+  const to = document.getElementById("to").value;
+
+  if (!to) return;
+
+  // Fetches hotels for the destination and stores them so generatePlan() can
+  // recommend one inside the itinerary ("Where You'll Stay").
+  try {
+    const response = await fetch(`${API_BASE_URL}/hotels?city=${encodeURIComponent(to)}`);
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    const data = await response.json();
+
+    currentHotels.all = data.hotels || [];
+    currentHotels.medium = currentHotels.all.filter(h => h.planType === 'medium');
+    currentHotels.economy = currentHotels.all.filter(h => h.planType === 'economy');
+    currentHotels.premium = currentHotels.all.filter(h => h.planType === 'premium');
+  } catch (error) {
+    console.error('Error fetching hotels:', error);
+  }
+}
+
+// -------- GET TRAVEL COST FROM API DATA --------
+function getTravelCostFromAPI() {
+  let cost = 0;
+  
+  if (selectedTravelMode === 'train' && currentTravelOptions.trains.length > 0) {
+    const train = currentTravelOptions.trains[0]; // Use first available train
+    if (selectedPlanType === 'medium') {
+      cost = train.classes.economy.price;
+    } else if (selectedPlanType === 'economy') {
+      cost = train.classes.business ? train.classes.business.price : train.classes.economy.price;
+    } else if (selectedPlanType === 'premium') {
+      cost = train.classes.acStandard ? train.classes.acStandard.price : (train.classes.acLower ? train.classes.acLower.price : train.classes.economy.price);
+    }
+  } else if (selectedTravelMode === 'bus' && currentTravelOptions.buses.length > 0) {
+    const bus = currentTravelOptions.buses[0]; // Use first available bus
+    if (selectedPlanType === 'medium') {
+      cost = currentTravelOptions.buses.find(b => b.type === 'Economy' || b.type === 'Standard')?.price || bus.price;
+    } else if (selectedPlanType === 'economy') {
+      cost = bus.price;
+    } else if (selectedPlanType === 'premium') {
+      cost = currentTravelOptions.buses.find(b => b.type === 'Luxury')?.price || bus.price * 1.2;
+    }
+  } else if (selectedTravelMode === 'airplane' && currentTravelOptions.flights.length > 0) {
+    const flight = currentTravelOptions.flights[0]; // Use first available flight
+    if (selectedPlanType === 'medium') {
+      cost = flight.classes.economy.price;
+    } else if (selectedPlanType === 'economy') {
+      cost = flight.classes.economy.price;
+    } else if (selectedPlanType === 'premium') {
+      cost = flight.classes.business ? flight.classes.business.price : flight.classes.economy.price * 1.5;
+    }
+  } else {
+    // Fallback to default prices
+    const travelCosts = {
+      'bus': { medium: 500, economy: 1000, premium: 2000 },
+      'train': { medium: 800, economy: 1500, premium: 3000 },
+      'airplane': { medium: 3000, economy: 5000, premium: 10000 }
+    };
+    cost = travelCosts[selectedTravelMode][selectedPlanType];
+  }
+  
+  return cost;
+}
+
+// -------- AI (CLAUDE) PLAN --------
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Ask the backend to generate a real, Claude-written itinerary. Throws on any
+// failure (missing key, network, API error) so generatePlan() can fall back.
+async function fetchAIPlan(ctx) {
+  const response = await fetch(`${API_BASE_URL}/ai-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ctx)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || `AI request failed (${response.status})`);
+  if (!data.plan) throw new Error('AI returned no plan');
+  return data;
+}
+
+// Render Claude's structured plan into the same rich .ai-plan layout.
+function renderAIPlan(ai, c) {
+  const catIcon = { Historical: 'landmark', Nature: 'mountain-sun', Food: 'utensils', Shopping: 'bag-shopping', Culture: 'star' };
+  const catKey = { Historical: 'history', Nature: 'nature', Food: 'food', Shopping: 'shopping', Culture: 'culture' };
+  const slot = (when, what) => `<div class="slot"><div class="when">${esc(when)}</div><div class="what">${esc(what)}</div></div>`;
+
+  let html = `<div class="ai-plan">
+    <div class="plan-hero">
+      <div class="route"><i class="fas fa-route"></i> ${esc(c.fromTitle)} <span class="arrow"><i class="fas fa-arrow-right-long"></i></span> ${esc(c.toTitle)}</div>
+      <div class="sub">${c.days}-day ${esc(c.planLabel)}${esc(c.daysNote || '')} &middot; ${esc(c.startDate)} &rarr; ${esc(c.endDate)}</div>
+      <div class="chips">
+        <span class="chip"><i class="fas fa-robot"></i> Generated by Claude</span>
+        <span class="chip"><i class="fas fa-${c.modeIcon}"></i> ${esc(c.modeLabel)}</span>
+        <span class="chip"><i class="fas fa-calendar-day"></i> ${c.days} days</span>
+        <span class="chip"><i class="fas fa-wallet"></i> Budget PKR ${c.budget.toLocaleString()}</span>
+        <span class="chip ${c.withinBudget ? 'ok' : 'over'}"><i class="fas fa-${c.withinBudget ? 'circle-check' : 'triangle-exclamation'}"></i> ${c.withinBudget ? 'Within budget' : 'Over budget'}</span>
+      </div>
+    </div>
+    <div class="stay-card" style="border-left-color:var(--primary);">
+      <div class="stay-main"><div style="color:#444;line-height:1.6;">${esc(ai.overview)}</div></div>
+    </div>`;
+
+  const h = ai.hotel || {};
+  html += `
+    <div class="plan-section-title"><i class="fas fa-hotel"></i> Where You'll Stay</div>
+    <div class="stay-card">
+      <div class="stay-main">
+        <div class="stay-name">${esc(h.name)}</div>
+        <div class="stay-loc"><i class="fas fa-map-marker-alt"></i> ${esc(h.area)}</div>
+        <div style="color:#555;font-size:.92rem;">${esc(h.why)}</div>
+      </div>
+      <div class="stay-price">PKR ${Number(h.pricePerNight || 0).toLocaleString()}<small>per night</small></div>
+    </div>`;
+
+  html += `<div class="plan-section-title"><i class="fas fa-calendar-check"></i> Day-by-Day Itinerary</div>`;
+  (ai.days || []).forEach((d, i) => {
+    html += `
+    <div class="day-card ${i % 2 === 0 ? 'alt' : ''}">
+      <div class="day-head"><span class="day-badge">Day ${Number(d.day) || i + 1}</span><span class="day-title">${esc(d.title)}</span></div>
+      ${slot('Morning', d.morning)}
+      ${slot('Afternoon', d.afternoon)}
+      ${slot('Evening', d.evening)}
+    </div>`;
+  });
+
+  const dishes = (ai.food || []).map(f => `<li><strong>${esc(f)}</strong></li>`).join('');
+  const sights = (ai.attractions || []).map(a => {
+    const key = catKey[a.category] || 'culture';
+    const icon = catIcon[a.category] || 'star';
+    return `<li><strong>${esc(a.name)}</strong> — ${esc(a.description)} <span class="cat-chip cat-${key}"><i class="fas fa-${icon}"></i>${esc(a.category)}</span></li>`;
+  }).join('');
+  html += `
+    <div class="plan-section-title"><i class="fas fa-compass"></i> Local Highlights</div>
+    <div class="info-grid">
+      <div class="info-card food">
+        <h4><i class="fas fa-utensils" style="color:var(--warning)"></i> Taste of ${esc(c.toTitle)}</h4>
+        <ul>${dishes}<li style="color:#888;"><i class="fas fa-location-dot"></i> Best food area: <strong>${esc(ai.foodArea)}</strong> &middot; Market: <strong>${esc(ai.market)}</strong></li></ul>
+      </div>
+      <div class="info-card history">
+        <h4><i class="fas fa-landmark" style="color:var(--accent)"></i> Attractions</h4>
+        <ul>${sights}</ul>
+      </div>
+    </div>`;
+
+  if ((ai.tips || []).length) {
+    html += `
+    <div class="plan-section-title"><i class="fas fa-lightbulb"></i> Travel Tips</div>
+    <div class="info-card" style="border-top:4px solid var(--success);">
+      <ul>${ai.tips.map(tp => `<li><i class="fas fa-check" style="color:var(--success)"></i> ${esc(tp)}</li>`).join('')}</ul>
+    </div>`;
+  }
+
+  html += `
+    <div class="plan-budget-footer">
+      <div class="pb-row"><span><i class="fas fa-hotel"></i> Hotel (${c.days} nights)</span><span>PKR ${Math.round(c.hotelCost).toLocaleString()}</span></div>
+      <div class="pb-row"><span><i class="fas fa-utensils"></i> Food (${c.days} days)</span><span>PKR ${Math.round(c.foodCost).toLocaleString()}</span></div>
+      <div class="pb-row"><span><i class="fas fa-${c.modeIcon}"></i> Travel (round trip)</span><span>PKR ${c.travelCost.toLocaleString()}</span></div>
+      <div class="pb-total"><span>Total</span><span>PKR ${Math.round(c.total).toLocaleString()}</span></div>
+      <div class="pb-remain" style="color:${c.withinBudget ? '#7CFF9B' : '#FF8FB0'}"><i class="fas fa-robot"></i> ${esc(ai.budgetNote)}</div>
+    </div>
+  </div>`;
+  return html;
+}
+
+// -------- PLANNER LOGIC --------
+async function generatePlan() {
+  const from = document.getElementById("from").value || "Unknown";
+  const to = document.getElementById("to").value || "Unknown";
+  const budget = +document.getElementById("budget").value || 0;
+  const hotel = +document.getElementById("hotel").value || 0;
+  const food = +document.getElementById("food").value || 0;
+  const startDate = document.getElementById("startDate").value || "Not set";
+  const endDate = document.getElementById("endDate").value || "Not set";
+  
+  // Fetch travel options if not already fetched
+  if (currentTravelOptions.trains.length === 0 && currentTravelOptions.buses.length === 0 && currentTravelOptions.flights.length === 0) {
+    await fetchTravelOptions();
+  }
+
+  // Fetch hotels so we can recommend a place to stay
+  if (currentHotels.all.length === 0) {
+    await fetchHotels();
+  }
+
+  // Calculate days
+  let days = calculateDays();
+  const startVal = document.getElementById("startDate").value;
+  const endVal = document.getElementById("endDate").value;
+
+  // Reversed / same-day dates: don't build a nonsense trip — tell the user.
+  if (startVal && endVal && days <= 0) {
+    itinerary.innerHTML = `
+      <div style="text-align:center;padding:40px 20px;background:rgba(255,0,110,.08);border:2px dashed var(--secondary);border-radius:14px;color:var(--secondary);">
+        <i class="fas fa-triangle-exclamation fa-2x"></i>
+        <p style="margin-top:12px;font-weight:700;font-size:1.05rem;">Your End Date must be after your Start Date.</p>
+        <p style="color:#666;">You picked <strong>${startVal}</strong> &rarr; <strong>${endVal}</strong>. Please fix the dates and generate again.</p>
+      </div>`;
+    return;
+  }
+  if (days <= 0) days = 3; // no/partial dates → sensible default
+
+  // Cap the itinerary length so plans stay useful (and the AI stays fast).
+  const MAX_TRIP_DAYS = 21;
+  let daysNote = '';
+  if (days > MAX_TRIP_DAYS) {
+    daysNote = ` (planning the first ${MAX_TRIP_DAYS} days of your ${days}-day span)`;
+    days = MAX_TRIP_DAYS;
+  }
+
+  // Get tourist places for the destination
+  const places = getTouristPlaces(to, days - 1); // -1 for travel day
+  
+  // Get travel mode descriptions
+  const modeDescriptions = {
+    'bus': 'comfortable bus journey',
+    'train': 'scenic train ride',
+    'airplane': 'flight'
+  };
+  
+  // Get plan descriptions
+  const planDescriptions = {
+    'medium': 'budget-friendly experience',
+    'economy': 'standard economy package',
+    'premium': 'luxury premium experience'
+  };
+  
+  // Calculate costs
+  const planTypes = {
+    'medium': { hotelMultiplier: 0.8, foodMultiplier: 0.7 },
+    'economy': { hotelMultiplier: 1, foodMultiplier: 1 },
+    'premium': { hotelMultiplier: 1.5, foodMultiplier: 2 }
+  };
+  
+  const plan = planTypes[selectedPlanType];
+  const travelCost = getTravelCostFromAPI() * 2; // Round trip
+  
+  const hotelCost = hotel * days * plan.hotelMultiplier;
+  const foodCost = food * days * plan.foodMultiplier;
+  const total = hotelCost + foodCost + travelCost;
+  
+  // ---- Build the rich AI plan ----
+  const fromTitle = toTitleCase(from);
+  const toTitle = toTitleCase(to);
+  const cuisine = cuisineFor(to);
+  const cityKey = Object.keys(touristPlaces).find(k => to.toLowerCase().includes(k));
+  const allPlaces = cityKey ? touristPlaces[cityKey] : places;
+  const hist = allPlaces.filter(p => ['history', 'culture'].includes(catOfPlace(p).key)).slice(0, 5);
+  const histList = (hist.length ? hist : allPlaces.slice(0, 4));
+  const pickedHotel = recommendHotel(selectedPlanType);
+  const withinBudget = budget === 0 || total <= budget;
+  const modeIcon = { bus: 'bus', train: 'train', airplane: 'plane' }[selectedTravelMode] || 'route';
+  const modeLabel = selectedTravelMode.charAt(0).toUpperCase() + selectedTravelMode.slice(1);
+
+  // Real food-street / market names (fall back to city-named spots, never "local")
+  const usingDefaultCuisine = (cuisine === defaultCuisine);
+  const foodSpot = usingDefaultCuisine ? `${toTitle} Food Street` : cuisine.spot;
+  const market = usingDefaultCuisine ? `${toTitle} Bazaar` : cuisine.market;
+
+  // Always recommend a place to stay — use the fetched hotel, otherwise build a
+  // recommendation from the selected plan type so the section never disappears.
+  const stayNames = {
+    medium: `${toTitle} Comfort Inn`,
+    economy: `${toTitle} Grand Hotel`,
+    premium: `${toTitle} Luxury Resort & Spa`
+  };
+  const stayAmenities = {
+    medium: ['WiFi', 'Breakfast', 'Parking', 'Room Service'],
+    economy: ['WiFi', 'Breakfast', 'Restaurant', 'Room Service', 'AC'],
+    premium: ['WiFi', 'Pool', 'Spa', 'Fine Dining', 'Gym', 'Concierge']
+  };
+  const stay = pickedHotel || {
+    name: stayNames[selectedPlanType],
+    location: `${toTitle} City Center`,
+    description: `${toTitleCase(planDescriptions[selectedPlanType])} recommended for your ${selectedPlanType} plan`,
+    amenities: stayAmenities[selectedPlanType],
+    rating: selectedPlanType === 'premium' ? 5 : selectedPlanType === 'economy' ? 4 : 3.5,
+    pricePerNight: hotel
+  };
+
+  const slot = (when, what) => `<div class="slot"><div class="when">${when}</div><div class="what">${what}</div></div>`;
+  const chip = (c) => `<span class="cat-chip cat-${c.key}"><i class="fas fa-${c.icon}"></i>${c.label}</span>`;
+
+  // ---- Try a real Claude-generated plan first; fall back to the built-in one ----
+  const planCtx = {
+    fromTitle, toTitle, days, startDate, endDate, budget, total,
+    hotelCost, foodCost, travelCost, withinBudget, modeIcon, modeLabel,
+    planLabel: planDescriptions[selectedPlanType], daysNote
+  };
+  itinerary.innerHTML = `<div style="text-align:center;padding:50px 20px;color:#666;">
+    <i class="fas fa-robot fa-2x" style="color:var(--primary);"></i>
+    <p style="margin-top:12px;font-weight:600;">Claude is planning your ${days}-day ${toTitle} trip…</p>
+    <p style="color:#999;font-size:.9rem;">This takes a few seconds.</p></div>`;
+
+  let aiHTML = null;
+  try {
+    const ai = await fetchAIPlan({
+      from: fromTitle, to: toTitle, days, startDate, endDate,
+      budget, planType: selectedPlanType, travelMode: selectedTravelMode,
+      hotelPerNight: hotel, foodPerDay: food,
+      hotelCost: Math.round(hotelCost), foodCost: Math.round(foodCost),
+      travelCost, total: Math.round(total),
+      recommendedHotel: pickedHotel || stay, attractions: allPlaces
+    });
+    aiHTML = renderAIPlan(ai.plan, planCtx);
+  } catch (err) {
+    console.warn('AI plan unavailable, using built-in generator:', err.message);
+  }
+
+  // Hero summary
+  let itineraryHTML = `<div class="ai-plan">
+    <div class="plan-hero">
+      <div class="route"><i class="fas fa-route"></i> ${fromTitle} <span class="arrow"><i class="fas fa-arrow-right-long"></i></span> ${toTitle}</div>
+      <div class="sub">${days}-day ${planDescriptions[selectedPlanType]}${daysNote} &middot; ${startDate} &rarr; ${endDate}</div>
+      <div class="chips">
+        <span class="chip"><i class="fas fa-${modeIcon}"></i> ${modeLabel}</span>
+        <span class="chip"><i class="fas fa-calendar-day"></i> ${days} days</span>
+        <span class="chip"><i class="fas fa-map-location-dot"></i> ${places.length} attractions</span>
+        <span class="chip"><i class="fas fa-wallet"></i> Budget PKR ${budget.toLocaleString()}</span>
+        <span class="chip ${withinBudget ? 'ok' : 'over'}"><i class="fas fa-${withinBudget ? 'circle-check' : 'triangle-exclamation'}"></i> ${withinBudget ? 'Within budget' : 'Over budget'}</span>
+      </div>
+    </div>`;
+
+  // Where you'll stay — always shown (uses fetched hotel or a plan-based pick)
+  itineraryHTML += `
+    <div class="plan-section-title"><i class="fas fa-hotel"></i> Where You'll Stay</div>
+    <div class="stay-card">
+      <div class="stay-main">
+        <div class="stay-name">${stay.name}</div>
+        <div class="stay-loc"><i class="fas fa-map-marker-alt"></i> ${stay.location}</div>
+        <div style="color:#555;font-size:.92rem;">${stay.description || ''}</div>
+        <div class="mini-tags">${(stay.amenities || []).slice(0, 6).map(a => `<span class="mini-tag">${a}</span>`).join('')}</div>
+        <div style="margin-top:8px;color:var(--warning);font-weight:700;">${'★'.repeat(Math.floor(stay.rating || 4))} <span style="color:#666;font-weight:600;">${stay.rating || ''}</span></div>
+      </div>
+      <div class="stay-price">PKR ${(stay.pricePerNight || 0).toLocaleString()}<small>per night</small></div>
+    </div>`;
+
+  // Day-by-day itinerary
+  itineraryHTML += `<div class="plan-section-title"><i class="fas fa-calendar-check"></i> Day-by-Day Itinerary</div>`;
+  itineraryHTML += `
+    <div class="day-card">
+      <div class="day-head"><span class="day-badge">Day 1</span><span class="day-title">Departure from ${fromTitle}</span></div>
+      ${slot('Morning', `Board your <strong>${modeDescriptions[selectedTravelMode]}</strong> from ${fromTitle} to ${toTitle}`)}
+      ${slot('Afternoon', `Arrive and check into <strong>${stay.name}</strong>`)}
+      ${slot('Evening', `Settle in and try <strong>${cuisine.dishes[0]}</strong> at ${foodSpot} <span class="cat-chip cat-food"><i class="fas fa-utensils"></i>Food</span>`)}
+    </div>`;
+
+  for (let i = 0; i < days - 1; i++) {
+    const place = places[i];
+    const cat = catOfPlace(place);
+    const dish = cuisine.dishes[(i + 1) % cuisine.dishes.length];
+    itineraryHTML += `
+    <div class="day-card ${i % 2 === 0 ? 'alt' : ''}">
+      <div class="day-head"><span class="day-badge">Day ${i + 2}</span><span class="day-title">Explore ${toTitle} — ${place.name}</span></div>
+      ${slot(place.time || 'Morning', `Visit <strong>${place.name}</strong> — ${place.description} ${chip(cat)} <em style="color:#999;">(${place.duration})</em>`)}
+      ${slot('Lunch', `Taste <strong>${dish}</strong> at ${foodSpot} <span class="cat-chip cat-food"><i class="fas fa-utensils"></i>Food</span>`)}
+      ${slot('Evening', `${toTitleCase(planDescriptions[selectedPlanType])} — unwind at ${stay.name} or stroll ${market} <span class="cat-chip cat-shopping"><i class="fas fa-bag-shopping"></i>Shopping</span>`)}
+    </div>`;
+  }
+
+  itineraryHTML += `
+    <div class="day-card ${(days - 1) % 2 === 0 ? 'alt' : ''}">
+      <div class="day-head"><span class="day-badge">Day ${days + 1}</span><span class="day-title">Return to ${fromTitle}</span></div>
+      ${slot('Morning', `Souvenir shopping at ${market} and a final taste of <strong>${cuisine.dishes[0]}</strong>`)}
+      ${slot('Afternoon', `Check out of ${stay.name} and head to the ${selectedTravelMode === 'airplane' ? 'airport' : 'station'}`)}
+      ${slot('Evening', `Return <strong>${modeDescriptions[selectedTravelMode]}</strong> to ${fromTitle}`)}
+    </div>`;
+
+  // Local highlights: food + history
+  itineraryHTML += `
+    <div class="plan-section-title"><i class="fas fa-compass"></i> Local Highlights</div>
+    <div class="info-grid">
+      <div class="info-card food">
+        <h4><i class="fas fa-utensils" style="color:var(--warning)"></i> Taste of ${toTitle}</h4>
+        <ul>
+          ${cuisine.dishes.map(d => `<li><strong>${d}</strong></li>`).join('')}
+          <li style="color:#888;"><i class="fas fa-location-dot"></i> Best food area: <strong>${foodSpot}</strong> &middot; Market: <strong>${market}</strong></li>
+        </ul>
+      </div>
+      <div class="info-card history">
+        <h4><i class="fas fa-landmark" style="color:var(--accent)"></i> Historical &amp; Cultural</h4>
+        <ul>
+          ${histList.map(p => `<li><strong>${p.name}</strong> — ${p.description}</li>`).join('')}
+        </ul>
+      </div>
+    </div>`;
+
+  // Budget footer
+  itineraryHTML += `
+    <div class="plan-budget-footer">
+      <div class="pb-row"><span><i class="fas fa-hotel"></i> Hotel (${days} nights)</span><span>PKR ${Math.round(hotelCost).toLocaleString()}</span></div>
+      <div class="pb-row"><span><i class="fas fa-utensils"></i> Food (${days} days)</span><span>PKR ${Math.round(foodCost).toLocaleString()}</span></div>
+      <div class="pb-row"><span><i class="fas fa-${modeIcon}"></i> Travel (round trip)</span><span>PKR ${travelCost.toLocaleString()}</span></div>
+      <div class="pb-total"><span>Total</span><span>PKR ${Math.round(total).toLocaleString()}</span></div>
+      <div class="pb-remain" style="color:${withinBudget ? '#7CFF9B' : '#FF8FB0'}">
+        <i class="fas fa-${withinBudget ? 'piggy-bank' : 'triangle-exclamation'}"></i>
+        ${budget === 0 ? 'Set a budget to see your savings' : withinBudget ? `You save PKR ${(budget - total).toLocaleString()}` : `Over budget by PKR ${(total - budget).toLocaleString()}`}
+      </div>
+    </div>
+  </div>`;
+
+  // Prefer Claude's plan; the built-in one is the fallback.
+  itinerary.innerHTML = aiHTML || itineraryHTML;
+  
+  renderChart(hotelCost, foodCost, travelCost);
+  
+  // Update budget summary
+  document.getElementById("hotelCost").textContent = `PKR ${Math.round(hotelCost).toLocaleString()}`;
+  document.getElementById("foodCost").textContent = `PKR ${Math.round(foodCost).toLocaleString()}`;
+  document.getElementById("travelCost").textContent = `PKR ${travelCost.toLocaleString()}`;
+  document.getElementById("totalCost").textContent = `PKR ${Math.round(total).toLocaleString()}`;
+  
+  // Update plan info
+  updatePlanInfo();
+}
+
+// -------- CHART --------
+function renderChart(hotel, food, travel) {
+  if (chart) chart.destroy();
+  
+  const ctx = document.getElementById("chart").getContext("2d");
+  chart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Hotel", "Food", "Travel"],
+      datasets: [{
+        data: [hotel, food, travel],
+        backgroundColor: [
+          "rgba(58, 134, 255, 0.9)",
+          "rgba(255, 0, 110, 0.9)",
+          "rgba(131, 56, 236, 0.9)"
+        ],
+        borderColor: [
+          "rgba(58, 134, 255, 1)",
+          "rgba(255, 0, 110, 1)",
+          "rgba(131, 56, 236, 1)"
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            font: {
+              size: 14
+            },
+            padding: 20
+          }
+        }
+      }
+    }
+  });
+}
+
+// -------- SAVE PLAN --------
+function savePlan() {
+  const from = document.getElementById("from").value || "Unknown";
+  const to = document.getElementById("to").value || "Unknown";
+  const budget = +document.getElementById("budget").value || 0;
+  
+  const hotel = +document.getElementById("hotel").value || 0;
+  const food = +document.getElementById("food").value || 0;
+  const days = calculateDays();
+  
+  const planTypes = {
+    'medium': { hotelMultiplier: 0.8, foodMultiplier: 0.7 },
+    'economy': { hotelMultiplier: 1, foodMultiplier: 1 },
+    'premium': { hotelMultiplier: 1.5, foodMultiplier: 2 }
+  };
+  
+  const travelCosts = {
+    'bus': { medium: 500, economy: 1000, premium: 2000 },
+    'train': { medium: 800, economy: 1500, premium: 3000 },
+    'airplane': { medium: 3000, economy: 5000, premium: 10000 }
+  };
+  
+  const plan = planTypes[selectedPlanType];
+  const travelCost = travelCosts[selectedTravelMode][selectedPlanType] * 2;
+  const hotelCost = hotel * days * plan.hotelMultiplier;
+  const foodCost = food * days * plan.foodMultiplier;
+  const total = hotelCost + foodCost + travelCost;
+  
+  const planData = {
+    id: Date.now(),
+    from: from,
+    to: to,
+    budget: budget,
+    travelMode: selectedTravelMode,
+    planType: selectedPlanType,
+    total: total,
+    days: days,
+    date: new Date().toLocaleDateString(),
+    itinerary: itinerary.innerHTML
+  };
+  
+  let saved = JSON.parse(localStorage.getItem("plans") || "[]");
+  saved.push(planData);
+  localStorage.setItem("plans", JSON.stringify(saved));
+  
+  loadSaved();
+  
+  // Show confirmation
+  alert(`${selectedPlanType.charAt(0).toUpperCase() + selectedPlanType.slice(1)} ${days}-day plan for ${from} to ${to} via ${selectedTravelMode} saved successfully!`);
+}
+
+function loadSaved() {
+  let saved = JSON.parse(localStorage.getItem("plans") || "[]");
+  const savedList = document.getElementById("savedList");
+  
+  if (saved.length === 0) {
+    savedList.innerHTML = `
+      <p style="text-align: center; color: #888; padding: 30px;">
+        <i class="fas fa-inbox fa-3x" style="color: #e0e0e0; margin-bottom: 15px;"></i><br>
+        No saved plans yet. Generate and save a plan to see it here.
+      </p>
+    `;
+    return;
+  }
+  
+  savedList.innerHTML = saved.map(plan => `
+    <div class="saved-plan">
+      <div class="saved-plan-header">
+        <h3>${plan.from} → ${plan.to} (${plan.days} days)</h3>
+        <div class="saved-plan-actions">
+          <button class="delete-btn" onclick="deletePlan(${plan.id})"><i class="fas fa-trash"></i></button>
+        </div>
+      </div>
+      <p><strong>Travel Mode:</strong> ${plan.travelMode.charAt(0).toUpperCase() + plan.travelMode.slice(1)} | <strong>Plan Type:</strong> ${plan.planType.charAt(0).toUpperCase() + plan.planType.slice(1)}</p>
+      <p><strong>Saved on:</strong> ${plan.date}</p>
+      <p><strong>Budget:</strong> PKR ${plan.budget.toLocaleString()} | <strong>Total Cost:</strong> PKR ${plan.total.toLocaleString()}</p>
+      <button onclick="loadPlan(${plan.id})" style="margin-top: 10px;">View Details</button>
+    </div>
+  `).join("");
+}
+
+function deletePlan(id) {
+  let saved = JSON.parse(localStorage.getItem("plans") || "[]");
+  saved = saved.filter(plan => plan.id !== id);
+  localStorage.setItem("plans", JSON.stringify(saved));
+  loadSaved();
+}
+
+function loadPlan(id) {
+  let saved = JSON.parse(localStorage.getItem("plans") || "[]");
+  const plan = saved.find(p => p.id === id);
+  
+  if (plan) {
+    // Fill the form
+    document.getElementById("from").value = plan.from;
+    document.getElementById("to").value = plan.to;
+    document.getElementById("budget").value = plan.budget;
+    
+    // Set travel mode and plan type
+    selectTravelMode(plan.travelMode);
+    selectPlanType(plan.planType);
+    
+    // Show itinerary
+    itinerary.innerHTML = plan.itinerary;
+    
+    // Go to planner page
+    showPage('planner');
+  }
+}
+
+function clearAllPlans() {
+  if (confirm("Are you sure you want to delete all saved plans?")) {
+    localStorage.clear();
+    loadSaved();
+  }
+}
+
+// -------- INITIALIZE --------
+const itinerary = document.getElementById("itinerary");
+
+// Set default dates
+const today = new Date();
+const nextWeek = new Date(today);
+nextWeek.setDate(today.getDate() + 7);
+
+document.getElementById("startDate").valueAsDate = today;
+document.getElementById("endDate").valueAsDate = nextWeek;
+
+// Initialize selections
+selectTravelMode('bus');
+selectPlanType('medium');
+
+// Prefetch pricing/hotels once a city is committed (blur / autocomplete pick).
+document.getElementById("from").addEventListener('change', function() {
+  fetchTravelOptions();
+});
+document.getElementById("to").addEventListener('change', function() {
+  fetchTravelOptions();
+  fetchHotels();
+});
+
+// City autocomplete for the From / To fields
+setupCityAutocomplete("from");
+setupCityAutocomplete("to");
+
+// Load saved plans on page load
+loadSaved();
+
+// Test server connection on page load
+testServerConnection().then(isConnected => {
+  if (!isConnected) {
+    console.log('💡 Tip: Start the backend server by running "node server.js" in the backend folder');
+  }
+});
+
+// Load hotels and travel options if destination is already filled (e.g., from saved plan or default)
+setTimeout(() => {
+  const to = document.getElementById("to").value;
+  const from = document.getElementById("from").value;
+  if (to) {
+    fetchHotels();
+  }
+  if (from && to) {
+    fetchTravelOptions();
+  }
+}, 1000);
+
+// Initialize chart with placeholder data
+renderChart(12000, 3600, 8000);
+document.getElementById("hotelCost").textContent = "PKR 12,000";
+document.getElementById("foodCost").textContent = "PKR 3,600";
+document.getElementById("travelCost").textContent = "PKR 8,000";
+document.getElementById("totalCost").textContent = "PKR 23,600";
+
+</script>
+
+</body>
+</html>

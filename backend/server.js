@@ -1,0 +1,1133 @@
+const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
+const { Pool } = require('pg');
+const cors = require('cors');
+require('dotenv').config();
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// ============ DATABASE CONNECTION ============
+const pool = new Pool({
+    user: process.env.DB_USER || 'postgres',
+    host: process.env.DB_HOST || 'localhost',
+    database: process.env.DB_DATABASE || 'travel_planner',
+    password: process.env.DB_PASSWORD || 'your_password',
+    port: process.env.DB_PORT || 5432,
+});
+
+// Test database connection
+pool.connect((err, client, release) => {
+    if (err) {
+        console.error('❌ Error connecting to database:', err.stack);
+    } else {
+        console.log('✅ Successfully connected to PostgreSQL database');
+        release();
+    }
+});
+
+// ============ MIDDLEWARE ============
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://localhost:5500'],
+    credentials: true
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Session configuration
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'your_secret_key_here',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+        secure: false,
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
+
+// Serve static files from frontend folder
+app.use(express.static(path.join(__dirname, '../frontend')));
+app.use('/images', express.static(path.join(__dirname, '../frontend/images')));
+
+// ============ AUTHENTICATION ROUTES ============
+
+// Check authentication
+app.get('/api/check-auth', (req, res) => {
+    if (req.session.user) {
+        res.json({ authenticated: true, user: req.session.user });
+    } else {
+        res.status(401).json({ authenticated: false });
+    }
+});
+
+// Get current user
+app.get('/api/current-user', (req, res) => {
+    if (req.session.user) {
+        res.json({ user: req.session.user });
+    } else {
+        res.status(401).json({ message: 'Not authenticated' });
+    }
+});
+
+// Register
+app.post('/api/register', async (req, res) => {
+    const { fullName, email, password } = req.body;
+    
+    if (!fullName || !email || !password) {
+        return res.status(400).json({ message: 'All fields are required' });
+    }
+    
+    if (password.length < 6) {
+        return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+    
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+        return res.status(400).json({ message: 'Invalid email format' });
+    }
+    
+    try {
+        // Check if user exists
+        const userExists = await pool.query(
+            'SELECT * FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+        
+        if (userExists.rows.length > 0) {
+            return res.status(400).json({ message: 'Email already registered' });
+        }
+        
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 10);
+        
+        // Insert user
+        const result = await pool.query(
+            `INSERT INTO users (full_name, email, password, last_login) 
+             VALUES ($1, $2, $3, CURRENT_TIMESTAMP) 
+             RETURNING id, full_name, email, created_at`,
+            [fullName, email.toLowerCase(), hashedPassword]
+        );
+        
+        res.status(201).json({ 
+            message: 'Account created successfully',
+            user: result.rows[0] 
+        });
+    } catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({ message: 'Server error during registration' });
+    }
+});
+
+// Login
+app.post('/api/login', async (req, res) => {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+        return res.status(400).json({ message: 'Email and password are required' });
+    }
+    
+    try {
+        const result = await pool.query(
+            'SELECT * FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
+        
+        const user = result.rows[0];
+        
+        // Check if user has password set (not Google-only)
+        if (!user.password) {
+            return res.status(401).json({ 
+                message: 'This account uses Google login. Please sign in with Google.' 
+            });
+        }
+        
+        // Verify password
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
+        
+        // Update last login
+        await pool.query(
+            'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+            [user.id]
+        );
+        
+        // Set session
+        req.session.user = {
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name
+        };
+        
+        res.json({ 
+            message: 'Login successful',
+            user: { 
+                id: user.id, 
+                email: user.email, 
+                fullName: user.full_name 
+            } 
+        });
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ message: 'Server error during login' });
+    }
+});
+
+// Logout
+app.post('/api/logout', (req, res) => {
+    req.session.destroy((err) => {
+        if (err) {
+            return res.status(500).json({ message: 'Logout failed' });
+        }
+        res.clearCookie('connect.sid');
+        res.json({ message: 'Logged out successfully' });
+    });
+});
+
+// Forgot password
+app.post('/api/forgot-password', async (req, res) => {
+    const { email } = req.body;
+    
+    if (!email) {
+        return res.status(400).json({ message: 'Email is required' });
+    }
+    
+    try {
+        const result = await pool.query(
+            'SELECT * FROM users WHERE email = $1',
+            [email.toLowerCase()]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ message: 'No account found with this email' });
+        }
+        
+        // Generate reset token
+        const crypto = require('crypto');
+        const token = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date();
+        expiresAt.setHours(expiresAt.getHours() + 1);
+        
+        // Store token in database
+        await pool.query(
+            `INSERT INTO password_reset_tokens (user_id, token, expires_at) 
+             VALUES ($1, $2, $3)`,
+            [result.rows[0].id, token, expiresAt]
+        );
+        
+        // In production, send email with reset link
+        const resetLink = `http://localhost:3000/reset-password?token=${token}`;
+        console.log('🔑 Reset Link:', resetLink);
+        
+        res.json({ 
+            message: 'Password reset link sent to your email',
+            resetLink // Remove this in production
+        });
+    } catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Reset password
+app.post('/api/reset-password', async (req, res) => {
+    const { token, newPassword } = req.body;
+    
+    if (!token || !newPassword) {
+        return res.status(400).json({ message: 'Token and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+        return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+    
+    try {
+        // Verify token
+        const result = await pool.query(
+            `SELECT * FROM password_reset_tokens 
+             WHERE token = $1 AND used = FALSE AND expires_at > CURRENT_TIMESTAMP`,
+            [token]
+        );
+        
+        if (result.rows.length === 0) {
+            return res.status(400).json({ message: 'Invalid or expired token' });
+        }
+        
+        const tokenData = result.rows[0];
+        
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        // Update password
+        await pool.query(
+            'UPDATE users SET password = $1 WHERE id = $2',
+            [hashedPassword, tokenData.user_id]
+        );
+        
+        // Mark token as used
+        await pool.query(
+            'UPDATE password_reset_tokens SET used = TRUE WHERE id = $1',
+            [tokenData.id]
+        );
+        
+        res.json({ message: 'Password reset successfully' });
+    } catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// ============ TRAVEL DATA ROUTES ============
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        message: 'Travel API Server is running',
+        database: 'Connected',
+        session: req.session.user ? 'Authenticated' : 'Not authenticated'
+    });
+});
+
+// Train Data - Pakistan Railways
+const trains = {
+    'karachi': {
+        'islamabad': [
+            {
+                name: 'Karakoram Express',
+                number: '1UP',
+                departure: '08:00',
+                arrival: '22:30',
+                duration: '14h 30m',
+                classes: {
+                    economy: { price: 2500, seats: 'Available' },
+                    business: { price: 4500, seats: 'Available' },
+                    acLower: { price: 6000, seats: 'Limited' },
+                    acStandard: { price: 8000, seats: 'Available' }
+                }
+            },
+            {
+                name: 'Shalimar Express',
+                number: '15UP',
+                departure: '18:00',
+                arrival: '08:00',
+                duration: '14h 00m',
+                classes: {
+                    economy: { price: 2200, seats: 'Available' },
+                    business: { price: 4200, seats: 'Available' },
+                    acLower: { price: 5800, seats: 'Available' },
+                    acStandard: { price: 7500, seats: 'Limited' }
+                }
+            },
+            {
+                name: 'Allama Iqbal Express',
+                number: '5UP',
+                departure: '10:30',
+                arrival: '01:00',
+                duration: '14h 30m',
+                classes: {
+                    economy: { price: 2300, seats: 'Available' },
+                    business: { price: 4400, seats: 'Available' },
+                    acLower: { price: 6200, seats: 'Available' },
+                    acStandard: { price: 7800, seats: 'Available' }
+                }
+            }
+        ],
+        'lahore': [
+            {
+                name: 'Karakoram Express',
+                number: '1UP',
+                departure: '08:00',
+                arrival: '18:00',
+                duration: '10h 00m',
+                classes: {
+                    economy: { price: 1800, seats: 'Available' },
+                    business: { price: 3500, seats: 'Available' },
+                    acLower: { price: 4800, seats: 'Available' },
+                    acStandard: { price: 6500, seats: 'Limited' }
+                }
+            },
+            {
+                name: 'Shalimar Express',
+                number: '15UP',
+                departure: '18:00',
+                arrival: '04:00',
+                duration: '10h 00m',
+                classes: {
+                    economy: { price: 1700, seats: 'Available' },
+                    business: { price: 3300, seats: 'Available' },
+                    acLower: { price: 4600, seats: 'Available' },
+                    acStandard: { price: 6200, seats: 'Available' }
+                }
+            },
+            {
+                name: 'Allama Iqbal Express',
+                number: '5UP',
+                departure: '10:30',
+                arrival: '20:30',
+                duration: '10h 00m',
+                classes: {
+                    economy: { price: 1900, seats: 'Available' },
+                    business: { price: 3600, seats: 'Available' },
+                    acLower: { price: 4900, seats: 'Available' },
+                    acStandard: { price: 6600, seats: 'Available' }
+                }
+            }
+        ]
+    },
+    'islamabad': {
+        'karachi': [
+            {
+                name: 'Karakoram Express',
+                number: '2DN',
+                departure: '08:00',
+                arrival: '22:30',
+                duration: '14h 30m',
+                classes: {
+                    economy: { price: 2500, seats: 'Available' },
+                    business: { price: 4500, seats: 'Available' },
+                    acLower: { price: 6000, seats: 'Available' },
+                    acStandard: { price: 8000, seats: 'Limited' }
+                }
+            }
+        ],
+        'lahore': [
+            {
+                name: 'Karakoram Express',
+                number: '2DN',
+                departure: '08:00',
+                arrival: '12:00',
+                duration: '4h 00m',
+                classes: {
+                    economy: { price: 800, seats: 'Available' },
+                    business: { price: 1500, seats: 'Available' },
+                    acLower: { price: 2200, seats: 'Available' },
+                    acStandard: { price: 3000, seats: 'Available' }
+                }
+            }
+        ]
+    },
+    'lahore': {
+        'karachi': [
+            {
+                name: 'Karakoram Express',
+                number: '2DN',
+                departure: '12:00',
+                arrival: '22:00',
+                duration: '10h 00m',
+                classes: {
+                    economy: { price: 1800, seats: 'Available' },
+                    business: { price: 3500, seats: 'Available' },
+                    acLower: { price: 4800, seats: 'Available' },
+                    acStandard: { price: 6500, seats: 'Available' }
+                }
+            }
+        ],
+        'islamabad': [
+            {
+                name: 'Karakoram Express',
+                number: '1UP',
+                departure: '12:00',
+                arrival: '16:00',
+                duration: '4h 00m',
+                classes: {
+                    economy: { price: 800, seats: 'Available' },
+                    business: { price: 1500, seats: 'Available' },
+                    acLower: { price: 2200, seats: 'Available' },
+                    acStandard: { price: 3000, seats: 'Available' }
+                }
+            }
+        ]
+    }
+};
+
+// Helper function to normalize city names
+function normalizeCity(city) {
+    const cityMap = {
+        'karachi': 'karachi',
+        'lahore': 'lahore',
+        'islamabad': 'islamabad',
+        'multan': 'multan',
+        'swat': 'swat',
+        'skardu': 'skardu',
+        'hunza': 'hunza',
+        'hunza valley': 'hunza',
+        'quetta': 'quetta',
+        'peshawar': 'peshawar',
+        'murree': 'murree',
+        'naran': 'naran',
+        'chitral': 'chitral',
+        'rawalpindi': 'islamabad',
+        'rwp': 'islamabad'
+    };
+    
+    const normalized = city.toLowerCase().trim();
+    return cityMap[normalized] || normalized;
+}
+
+// Get trains
+app.get('/api/trains', (req, res) => {
+    const from = normalizeCity(req.query.from || '');
+    const to = normalizeCity(req.query.to || '');
+    
+    if (!from || !to) {
+        return res.status(400).json({ error: 'From and To cities are required' });
+    }
+    
+    const routeTrains = trains[from] && trains[from][to];
+    
+    if (!routeTrains) {
+        return res.json({
+            from,
+            to,
+            trains: [
+                {
+                    name: 'Karakoram Express',
+                    number: '1UP',
+                    departure: '08:00',
+                    arrival: '22:00',
+                    duration: '14h 00m',
+                    classes: {
+                        economy: { price: 2000, seats: 'Available' },
+                        business: { price: 4000, seats: 'Available' },
+                        acLower: { price: 5500, seats: 'Available' },
+                        acStandard: { price: 7000, seats: 'Available' }
+                    }
+                }
+            ]
+        });
+    }
+    
+    res.json({
+        from,
+        to,
+        trains: routeTrains
+    });
+});
+
+// Bus data
+const daewooBuses = {
+    'karachi': {
+        'islamabad': [
+            {
+                name: 'Daewoo Express - Luxury',
+                route: 'Karachi to Islamabad',
+                departure: '20:00',
+                arrival: '08:00',
+                duration: '12h 00m',
+                price: 3500,
+                seats: 'Available',
+                type: 'Luxury'
+            },
+            {
+                name: 'Daewoo Express - Standard',
+                route: 'Karachi to Islamabad',
+                departure: '22:00',
+                arrival: '10:00',
+                duration: '12h 00m',
+                price: 2800,
+                seats: 'Available',
+                type: 'Standard'
+            }
+        ]
+    },
+    'islamabad': {
+        'karachi': [
+            {
+                name: 'Daewoo Express - Luxury',
+                route: 'Islamabad to Karachi',
+                departure: '20:00',
+                arrival: '08:00',
+                duration: '12h 00m',
+                price: 3500,
+                seats: 'Available',
+                type: 'Luxury'
+            }
+        ],
+        'lahore': [
+            {
+                name: 'Daewoo Express - Luxury',
+                route: 'Islamabad to Lahore',
+                departure: '08:00',
+                arrival: '12:00',
+                duration: '4h 00m',
+                price: 1500,
+                seats: 'Available',
+                type: 'Luxury'
+            }
+        ]
+    },
+    'lahore': {
+        'karachi': [
+            {
+                name: 'Daewoo Express - Luxury',
+                route: 'Lahore to Karachi',
+                departure: '18:00',
+                arrival: '06:00',
+                duration: '12h 00m',
+                price: 3200,
+                seats: 'Available',
+                type: 'Luxury'
+            }
+        ],
+        'islamabad': [
+            {
+                name: 'Daewoo Express - Luxury',
+                route: 'Lahore to Islamabad',
+                departure: '08:00',
+                arrival: '12:00',
+                duration: '4h 00m',
+                price: 1500,
+                seats: 'Available',
+                type: 'Luxury'
+            }
+        ]
+    }
+};
+
+// Get Daewoo buses
+app.get('/api/buses', (req, res) => {
+    const from = normalizeCity(req.query.from || '');
+    const to = normalizeCity(req.query.to || '');
+    
+    if (!from || !to) {
+        return res.status(400).json({ error: 'From and To cities are required' });
+    }
+    
+    
+    const routeBuses = daewooBuses[from] && daewooBuses[from][to];
+    
+    if (!routeBuses) {
+        return res.json({
+            from,
+            to,
+            buses: [
+                {
+                    name: 'Daewoo Express - Standard',
+                    route: `${from} to ${to}`,
+                    departure: '20:00',
+                    arrival: '08:00',
+                    duration: '12h 00m',
+                    price: 2500,
+                    seats: 'Available',
+                    type: 'Standard'
+                }
+            ]
+        });
+    }
+    
+    res.json({
+        from,
+        to,
+        buses: routeBuses
+    });
+});
+
+// Flight data
+const flights = {
+    'karachi': {
+        'islamabad': [
+            {
+                airline: 'PIA (Pakistan International Airlines)',
+                flightNumber: 'PK-300',
+                departure: '08:00',
+                arrival: '09:30',
+                duration: '1h 30m',
+                classes: {
+                    economy: { price: 12000, seats: 'Available' },
+                    business: { price: 25000, seats: 'Available' }
+                }
+            }
+        ],
+        'lahore': [
+            {
+                airline: 'PIA (Pakistan International Airlines)',
+                flightNumber: 'PK-304',
+                departure: '09:00',
+                arrival: '10:15',
+                duration: '1h 15m',
+                classes: {
+                    economy: { price: 10000, seats: 'Available' },
+                    business: { price: 22000, seats: 'Available' }
+                }
+            }
+        ]
+    },
+    'islamabad': {
+        'karachi': [
+            {
+                airline: 'PIA (Pakistan International Airlines)',
+                flightNumber: 'PK-301',
+                departure: '10:00',
+                arrival: '11:30',
+                duration: '1h 30m',
+                classes: {
+                    economy: { price: 12000, seats: 'Available' },
+                    business: { price: 25000, seats: 'Available' }
+                }
+            }
+        ]
+    },
+    'lahore': {
+        'karachi': [
+            {
+                airline: 'PIA (Pakistan International Airlines)',
+                flightNumber: 'PK-305',
+                departure: '10:15',
+                arrival: '11:30',
+                duration: '1h 15m',
+                classes: {
+                    economy: { price: 10000, seats: 'Available' },
+                    business: { price: 22000, seats: 'Available' }
+                }
+            }
+        ]
+    }
+};
+
+// Get flights
+app.get('/api/flights', (req, res) => {
+    const from = normalizeCity(req.query.from || '');
+    const to = normalizeCity(req.query.to || '');
+    
+    if (!from || !to) {
+        return res.status(400).json({ error: 'From and To cities are required' });
+    }
+    
+    
+    const routeFlights = flights[from] && flights[from][to];
+    
+    if (!routeFlights) {
+        return res.json({
+            from,
+            to,
+            flights: [
+                {
+                    airline: 'PIA (Pakistan International Airlines)',
+                    flightNumber: 'PK-300',
+                    departure: '10:00',
+                    arrival: '11:30',
+                    duration: '1h 30m',
+                    classes: {
+                        economy: { price: 10000, seats: 'Available' },
+                        business: { price: 20000, seats: 'Available' }
+                    }
+                }
+            ]
+        });
+    }
+    
+    res.json({
+        from,
+        to,
+        flights: routeFlights
+    });
+});
+
+// Hotel Data
+const hotels = {
+    'karachi': [
+        {
+            name: 'Pearl Continental Hotel',
+            location: 'Clifton, Karachi',
+            planType: 'premium',
+            pricePerNight: 12000,
+            rating: 4.5,
+            amenities: ['WiFi', 'Pool', 'Spa', 'Restaurant', 'Gym', 'Parking'],
+            description: 'Luxury 5-star hotel with sea view'
+        },
+        {
+            name: 'Ramada Plaza',
+            location: 'Shahrah-e-Faisal, Karachi',
+            planType: 'economy',
+            pricePerNight: 6000,
+            rating: 4.2,
+            amenities: ['WiFi', 'Restaurant', 'Gym', 'Parking'],
+            description: 'Comfortable 4-star hotel'
+        },
+        {
+            name: 'Hotel Mehran',
+            location: 'Shahrah-e-Faisal, Karachi',
+            planType: 'medium',
+            pricePerNight: 4000,
+            rating: 3.8,
+            amenities: ['WiFi', 'Restaurant', 'Parking'],
+            description: 'Budget-friendly hotel with good amenities'
+        }
+    ],
+    'lahore': [
+        {
+            name: 'Pearl Continental Hotel Lahore',
+            location: 'Mall Road, Lahore',
+            planType: 'premium',
+            pricePerNight: 11000,
+            rating: 4.6,
+            amenities: ['WiFi', 'Pool', 'Spa', 'Restaurant', 'Gym', 'Parking', 'Business Center'],
+            description: 'Luxury hotel in heart of Lahore'
+        },
+        {
+            name: 'Avari Lahore',
+            location: 'Mall Road, Lahore',
+            planType: 'economy',
+            pricePerNight: 6500,
+            rating: 4.3,
+            amenities: ['WiFi', 'Pool', 'Restaurant', 'Gym', 'Parking'],
+            description: 'Comfortable stay in Lahore'
+        },
+        {
+            name: 'Hotel One Lahore',
+            location: 'Gulberg, Lahore',
+            planType: 'medium',
+            pricePerNight: 4500,
+            rating: 4.0,
+            amenities: ['WiFi', 'Restaurant', 'Parking'],
+            description: 'Mid-range hotel with good service'
+        }
+    ],
+    'islamabad': [
+        {
+            name: 'Serena Hotel Islamabad',
+            location: 'Diplomatic Enclave, Islamabad',
+            planType: 'premium',
+            pricePerNight: 13000,
+            rating: 4.7,
+            amenities: ['WiFi', 'Pool', 'Spa', 'Restaurant', 'Gym', 'Parking', 'Business Center'],
+            description: 'Luxury 5-star hotel with mountain view'
+        },
+        {
+            name: 'Ramada Islamabad',
+            location: 'Blue Area, Islamabad',
+            planType: 'economy',
+            pricePerNight: 7000,
+            rating: 4.2,
+            amenities: ['WiFi', 'Pool', 'Restaurant', 'Gym', 'Parking'],
+            description: 'Comfortable business hotel'
+        },
+        {
+            name: 'Hotel de Papae',
+            location: 'F-7, Islamabad',
+            planType: 'medium',
+            pricePerNight: 4800,
+            rating: 4.1,
+            amenities: ['WiFi', 'Restaurant', 'Parking'],
+            description: 'Good mid-range hotel'
+        }
+    ],
+    'hunza': [
+        {
+            name: 'Eagle\'s Nest Hotel',
+            location: 'Duikar, Hunza',
+            planType: 'premium',
+            pricePerNight: 20000,
+            rating: 4.8,
+            amenities: ['WiFi', 'Restaurant', 'Mountain View', 'Parking', 'Sunrise View'],
+            description: 'Luxury hotel with best sunrise views in Pakistan'
+        },
+        {
+            name: 'Hunza View Hotel',
+            location: 'Karimabad, Hunza',
+            planType: 'economy',
+            pricePerNight: 8000,
+            rating: 4.3,
+            amenities: ['WiFi', 'Restaurant', 'Mountain View', 'Parking'],
+            description: 'Comfortable hotel with valley views'
+        }
+    ],
+    'swat': [
+        {
+            name: 'Swat Serena Hotel',
+            location: 'Mingora, Swat',
+            planType: 'premium',
+            pricePerNight: 15000,
+            rating: 4.6,
+            amenities: ['WiFi', 'Pool', 'Spa', 'Restaurant', 'Gym', 'Parking', 'Mountain View'],
+            description: 'Luxury hotel with stunning mountain views'
+        },
+        {
+            name: 'Swat Continental Hotel',
+            location: 'Mingora, Swat',
+            planType: 'economy',
+            pricePerNight: 6000,
+            rating: 4.2,
+            amenities: ['WiFi', 'Restaurant', 'Parking', 'Mountain View'],
+            description: 'Comfortable hotel in Swat valley'
+        }
+    ],
+    'skardu': [
+        {
+            name: 'Shangrila Resort Skardu',
+            location: 'Shangrila, Skardu',
+            planType: 'premium',
+            pricePerNight: 18000,
+            rating: 4.7,
+            amenities: ['WiFi', 'Restaurant', 'Lake View', 'Parking', 'Garden'],
+            description: 'Luxury resort with lake and mountain views'
+        },
+        {
+            name: 'PTDC Motel Skardu',
+            location: 'Skardu City',
+            planType: 'economy',
+            pricePerNight: 7000,
+            rating: 4.0,
+            amenities: ['WiFi', 'Restaurant', 'Parking', 'Mountain View'],
+            description: 'Government-run hotel with mountain views'
+        }
+    ]
+};
+
+// Get hotels for a city
+app.get('/api/hotels', (req, res) => {
+    const city = normalizeCity(req.query.city || '');
+    const planType = req.query.planType || ''; // medium, economy, premium
+    
+    if (!city) {
+        return res.status(400).json({ error: 'City is required' });
+    }
+    
+    let cityHotels = hotels[city] || [];
+    
+    // Filter by plan type if specified
+    if (planType) {
+        cityHotels = cityHotels.filter(hotel => hotel.planType === planType);
+    }
+    
+    // If no hotels found for city, return default hotels
+    if (cityHotels.length === 0) {
+        cityHotels = [
+            {
+                name: `${city.charAt(0).toUpperCase() + city.slice(1)} Hotel`,
+                location: `${city} City Center`,
+                planType: 'medium',
+                pricePerNight: 4000,
+                rating: 3.5,
+                amenities: ['WiFi', 'Parking'],
+                description: 'Standard hotel accommodation'
+            }
+        ];
+    }
+    
+    res.json({
+        city,
+        planType: planType || 'all',
+        hotels: cityHotels
+    });
+});
+
+// Get all travel options
+app.get('/api/travel-options', (req, res) => {
+    const from = normalizeCity(req.query.from || '');
+    const to = normalizeCity(req.query.to || '');
+    
+    if (!from || !to) {
+        return res.status(400).json({ error: 'From and To cities are required' });
+    }
+    
+    const routeTrains = trains[from] && trains[from][to] || [];
+    const routeBuses = daewooBuses[from] && daewooBuses[from][to] || [];
+    const routeFlights = flights[from] && flights[from][to] || [];
+    
+    res.json({
+        from,
+        to,
+        trains: routeTrains,
+        buses: routeBuses,
+        flights: routeFlights
+    });
+});
+
+// Protected route - requires authentication
+app.get('/api/dashboard-data', (req, res) => {
+    if (!req.session.user) {
+        return res.status(401).json({ message: 'Please login to access this data' });
+    }
+    
+    res.json({
+        message: 'Welcome to your dashboard!',
+        user: req.session.user,
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ============ AI TRAVEL PLAN (Claude) ============
+// Generates a real, model-written itinerary via the Anthropic Messages API.
+// Requires ANTHROPIC_API_KEY in backend/.env. Returns 503 (so the frontend
+// falls back to its built-in generator) when the key is missing.
+app.post('/api/ai-plan', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey || apiKey === 'your_anthropic_api_key_here') {
+        return res.status(503).json({
+            error: 'ai_not_configured',
+            message: 'Set ANTHROPIC_API_KEY in backend/.env to enable Claude-powered plans.'
+        });
+    }
+
+    const t = req.body || {};
+    const from = t.from || 'Unknown';
+    const to = t.to || 'Unknown';
+    const days = Number(t.days) || 3;
+
+    // Model is configurable via .env — set ANTHROPIC_MODEL to whatever your API
+    // key supports (e.g. claude-sonnet-4-20250514, claude-opus-4-20250514).
+    const MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+
+    // JSON shape the model must return (asked for in the prompt — works on any model).
+    const JSON_SHAPE = `{
+  "overview": "1-2 sentence summary of the trip",
+  "hotel": { "name": "string", "area": "string", "pricePerNight": number, "why": "string" },
+  "days": [ { "day": number, "title": "string", "morning": "string", "afternoon": "string", "evening": "string" } ],
+  "food": ["dish name", "dish name"],
+  "foodArea": "real food street name",
+  "market": "real bazaar/market name",
+  "attractions": [ { "name": "string", "description": "string", "category": "Historical|Nature|Food|Shopping|Culture" } ],
+  "budgetNote": "string",
+  "tips": ["string", "string"]
+}`;
+
+    const hotelHint = t.recommendedHotel && t.recommendedHotel.name
+        ? `${t.recommendedHotel.name} in ${t.recommendedHotel.location || to} (~PKR ${t.recommendedHotel.pricePerNight || t.hotelPerNight}/night)`
+        : 'any suitable hotel for the plan tier';
+    const attractionHint = Array.isArray(t.attractions) && t.attractions.length
+        ? t.attractions.map(a => a.name).join(', ')
+        : 'the destination\'s notable places';
+
+    const prompt =
+`You are an expert Pakistan travel planner. Design a ${days}-day trip from ${from} to ${to}.
+
+Traveler inputs:
+- Dates: ${t.startDate || 'flexible'} to ${t.endDate || 'flexible'}
+- Travel mode: ${t.travelMode || 'any'}
+- Plan tier: ${t.planType || 'economy'} (medium = budget, economy = standard, premium = luxury)
+- Total budget: PKR ${t.budget || 0}
+- Hotel budget/night: PKR ${t.hotelPerNight || 0}; Food budget/day: PKR ${t.foodPerDay || 0}
+- Suggested hotel: ${hotelHint}
+- Known attractions in ${to}: ${attractionHint}
+
+Already-computed costs (use these exact figures, do not recompute): hotel PKR ${t.hotelCost || 0}, food PKR ${t.foodCost || 0}, round-trip travel PKR ${t.travelCost || 0}, total PKR ${t.total || 0}.
+
+Requirements:
+- Use REAL Pakistani places, real dish names, and real food streets / bazaars for ${to} — never the generic word "local".
+- Day 1 is departure/arrival, the last day is the return journey; the middle days explore ${to}.
+- Keep morning/afternoon/evening entries to one or two sentences each.
+- 'attractions' should list 4-6 real ${to} sights with an accurate category.
+- 'budgetNote' should reference the total (PKR ${t.total || 0}) versus the budget (PKR ${t.budget || 0}).
+
+Respond with ONLY a single JSON object in exactly this shape (no markdown, no code fences, no commentary):
+${JSON_SHAPE}`;
+
+    try {
+        const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: MODEL,
+                // Scale output room with trip length so long plans don't truncate.
+                max_tokens: Math.min(16000, 2000 + days * 400),
+                messages: [{ role: 'user', content: prompt }]
+            })
+        });
+
+        const data = await anthropicRes.json();
+        if (!anthropicRes.ok) {
+            console.error('❌ Anthropic API error:', data.error || data);
+            return res.status(502).json({ error: 'ai_request_failed', message: (data.error && data.error.message) || 'Claude request failed' });
+        }
+        if (data.stop_reason === 'refusal') {
+            return res.status(502).json({ error: 'ai_refused', message: 'The request was declined by safety filters.' });
+        }
+        const textBlock = (data.content || []).find(b => b.type === 'text');
+        if (!textBlock) {
+            return res.status(502).json({ error: 'ai_empty', message: 'Claude returned no content.' });
+        }
+
+        // Robustly extract JSON from the text (strip code fences / surrounding prose).
+        let raw = textBlock.text.trim();
+        const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fence) raw = fence[1].trim();
+        if (raw[0] !== '{') {
+            const s = raw.indexOf('{'), e = raw.lastIndexOf('}');
+            if (s >= 0 && e > s) raw = raw.slice(s, e + 1);
+        }
+        let plan;
+        try {
+            plan = JSON.parse(raw);
+        } catch (e) {
+            console.error('❌ AI JSON parse failed. First 200 chars:', raw.slice(0, 200));
+            return res.status(502).json({ error: 'ai_bad_json', message: 'Claude did not return valid JSON.' });
+        }
+        res.json({ source: data.model || MODEL, plan });
+    } catch (error) {
+        console.error('❌ /api/ai-plan error:', error);
+        res.status(500).json({ error: 'server_error', message: error.message });
+    }
+});
+
+// ============ SERVE FRONTEND ============
+
+// Serve the main page
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../frontend/index.html'));
+});
+
+// Dashboard route - serves the same index.html (single page app)
+app.get('/dashboard', (req, res) => {
+    if (!req.session.user) {
+        return res.redirect('/');
+    }
+    res.sendFile(path.join(__dirname, '../frontend/index.html'));
+});
+
+// Redirect /index to home
+app.get('/index', (req, res) => {
+    res.redirect('/');
+});
+
+// Redirect /index.html to home
+app.get('/index.html', (req, res) => {
+    res.redirect('/');
+});
+
+// Handle any other routes - redirect to home
+app.get('*', (req, res) => {
+    res.redirect('/');
+});
+
+// ============ START SERVER ============
+const server = app.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`📊 Connected to database: ${process.env.DB_DATABASE || 'travel_planner'}`);
+    console.log(`📡 Available endpoints:`);
+    console.log(`   POST /api/register - Create new account`);
+    console.log(`   POST /api/login - Login to your account`);
+    console.log(`   POST /api/logout - Logout`);
+    console.log(`   POST /api/forgot-password - Reset password`);
+    console.log(`   GET  /api/trains?from=karachi&to=lahore - Get trains`);
+    console.log(`   GET  /api/buses?from=karachi&to=lahore - Get buses`);
+    console.log(`   GET  /api/flights?from=karachi&to=lahore - Get flights`);
+    console.log(`   GET  /api/hotels?city=karachi&planType=economy - Get hotels`);
+    console.log(`   GET  /api/travel-options?from=karachi&to=lahore - Get all options`);
+    console.log(`   GET  /api/dashboard-data - Protected dashboard data`);
+    console.log(`   GET  /health - Health check`);
+});
+
+// Handle port already in use error
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use.`);
+        console.log(`💡 Try these solutions:`);
+        console.log(`   1. Kill the process using port ${PORT}`);
+        console.log(`   2. Change PORT in .env file`);
+        console.log(`   3. Wait a moment and try again`);
+        process.exit(1);
+    }
+});
